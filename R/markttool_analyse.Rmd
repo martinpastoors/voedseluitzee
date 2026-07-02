@@ -1,0 +1,346 @@
+---
+title: "Visfederatie Markttool - Import/Export analyse"
+author: ""
+date: "`r Sys.Date()`"
+output:
+  word_document:
+    reference_docx: "../report_template.dotx"
+    toc: true
+    toc_depth: 3
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo    = FALSE,   # standaard geen R-code tonen
+  include = TRUE,    # standaard wel output tonen
+  message = FALSE,
+  warning = FALSE
+)
+
+library(readxl)
+library(dplyr)
+library(purrr)
+library(stringr)
+library(tidyr)
+library(ggplot2)
+library(scales)
+```
+
+# Inleiding
+
+Dit script leest Excel-downloads van de **Visfederatie Markttool** in (import en
+export van vis vanuit Nederland, per product). Van elk bestand worden het
+**jaar**, het **type data** (import/export) en de **eenheid** afgeleid en als
+kolommen toegevoegd. Alle bestanden worden vervolgens samengevoegd tot één
+consistente dataset. Diagnostische/technische stappen zijn in dit rapport
+verborgen; getoond worden alleen de top 10 export- en importproducten, de
+import/export-figuur en een overzicht van de top 10 soorten.
+
+```{r settings, include=FALSE}
+data_dir <- r"(C:\Users\MartinPastoors\Martin Pastoors\WKC - Voedseluitzee\Data)"   # <-- pas aan naar de map met jouw markttool .xlsx bestanden
+
+# Zoek alle xlsx bestanden die op het markttool patroon lijken
+bestanden <- list.files(
+  path = data_dir,
+  pattern = "(?i)markttool.*\\products.xlsx$",
+  full.names = TRUE
+)
+
+# bestanden
+```
+
+```{r read-function, include=FALSE}
+# De Markttool-export heeft een vaste opbouw:
+# - Rij 1: filterbeschrijving (incl. "UnitMVO is ...")
+# - Rij 2: leeg
+# - Rij 3: kolomkoppen
+# - Rij 4 e.v.: data
+
+lees_markttool_bestand <- function(pad) {
+
+  bestandsnaam <- basename(pad)
+
+  # Jaar: eerste reeks van 4 cijfers in de bestandsnaam
+  jaar <- str_extract(bestandsnaam, "\\d{4}") |> as.integer()
+
+  # Type: import of export (case-insensitive) uit de bestandsnaam
+  type <- case_when(
+    str_detect(bestandsnaam, regex("import", ignore_case = TRUE)) ~ "import",
+    str_detect(bestandsnaam, regex("export", ignore_case = TRUE)) ~ "export",
+    TRUE ~ NA_character_
+  )
+
+  if (is.na(jaar) || is.na(type)) {
+    warning(paste("Kon jaar en/of type niet afleiden uit bestandsnaam:", bestandsnaam))
+  }
+
+  # Rij 1 bevat de toegepaste filters als vrije tekst, incl. "UnitMVO is ...".
+  filter_tekst <- read_excel(pad, range = cell_rows(1), col_names = FALSE)[[1]][1]
+  eenheid <- str_extract(filter_tekst, "(?<=UnitMVO is )[^\\n]+")
+
+  if (is.na(eenheid)) {
+    warning(paste("Kon eenheid (UnitMVO) niet vinden in bestand:", bestandsnaam))
+  }
+
+  df <- read_excel(
+    pad,
+    skip = 2,
+    col_types = c("text", "text", "text", "text", "numeric", "text", "numeric")
+  )
+
+  df |>
+    rename(
+      product_level_1  = `Product hierarchy - Level 1`,
+      product_level_2  = `Product hierarchy - Level 2`,
+      product_level_3  = `Product hierarchy - Level 3`,
+      product_level_4  = `Product hierarchy - Level 4`,
+      waarde           = `Sum`,
+      beschrijving     = `Description`,
+      pct_grand_total  = `% Grand total`
+    ) |>
+    mutate(
+      jaar         = jaar,
+      type         = type,
+      eenheid      = eenheid,
+      bestand      = bestandsnaam,
+      .before = 1
+    )
+}
+```
+
+```{r soort-function, include=FALSE}
+# Eenvoudige, op trefwoorden gebaseerde afleiding van de "soort" uit het
+# vrije-tekstveld "beschrijving". Dit is een heuristiek: de Markttool levert
+# geen apart soortveld, dus we zoeken naar bekende (Engelse) soortnamen in de
+# beschrijving. Meer specifieke/samengestelde termen staan eerst, zodat bv.
+# "blue whiting" niet als "whiting" wordt herkend en "atlantic salmon" niet
+# als losse "salmon"-match de plank misslaat. Alles wat niet herkend wordt,
+# valt in de categorie "Overig / onbekend".
+
+soort_patronen <- c(
+  "blue whiting"    = "Blauwe wijting",
+  "atlantic salmon" = "Zalm",
+  "pacific salmon"  = "Zalm",
+  "salmon"          = "Zalm",
+  "trout"           = "Forel",
+  "herring"         = "Haring",
+  "mackerel"        = "Makreel",
+  "alaska pollack"  = "Alaska koolvis",
+  "pollack"         = "Koolvis",
+  "haddock"         = "Schelvis",
+  "cod"             = "Kabeljauw",
+  "whiting"         = "Wijting",
+  "hake"            = "Heek",
+  "saithe"          = "Koolvis",
+  "coley"           = "Koolvis",
+  "plaice"          = "Schol",
+  "sole"            = "Tong",
+  "halibut"         = "Heilbot",
+  "turbot"          = "Tarbot",
+  "flounder"        = "Bot",
+  "sea bass"        = "Zeebaars",
+  "sea bream"       = "Zeebrasem",
+  "swordfish"       = "Zwaardvis",
+  "skipjack"        = "Tonijn (skipjack)",
+  "tuna"            = "Tonijn",
+  "bonito"          = "Bonito",
+  "sardinella"      = "Sardinella",
+  "sardine"         = "Sardine",
+  "sprat"           = "Sprot",
+  "brisling"        = "Sprot",
+  "anchov"          = "Ansjovis",
+  "capelin"         = "Lodde",
+  "sandeel"         = "Zandspiering",
+  "eel"             = "Paling / Aal",
+  "catfish"         = "Pangasius / Meerval",
+  "tilapia"         = "Tilapia",
+  "carp"            = "Karper",
+  "pike"            = "Snoek",
+  "perch"           = "Baars",
+  "monkfish"        = "Zeeduivel",
+  "redfish"         = "Roodbaars",
+  "shark"           = "Haai",
+  "ray"             = "Rog",
+  "shrimp"          = "Garnaal",
+  "prawn"           = "Garnaal",
+  "crab"            = "Krab",
+  "lobster"         = "Kreeft",
+  "crayfish"        = "Rivierkreeft",
+  "mussel"          = "Mossel",
+  "oyster"          = "Oester",
+  "scallop"         = "Sint-jakobsschelp",
+  "cockle"          = "Kokkel",
+  "clam"            = "Kokkel / Venusschelp",
+  "squid"           = "Inktvis (pijlinktvis)",
+  "cuttlefish"      = "Inktvis (zeekat)",
+  "octopus"         = "Octopus",
+  "abalone"         = "Abalone",
+  "sea urchin"      = "Zee-egel",
+  "krill"           = "Krill",
+  "caviar"          = "Kaviaar"
+)
+
+soort_regex <- paste(names(soort_patronen), collapse = "|")
+
+soort_van_beschrijving <- function(beschrijving) {
+  match <- str_extract(str_to_lower(beschrijving), soort_regex)
+  soort <- unname(soort_patronen[match])
+  soort[is.na(soort)] <- "Overig / onbekend"
+  soort
+}
+```
+
+```{r read-all, include=FALSE}
+stopifnot(length(bestanden) > 0)
+
+markttool_data <- map_dfr(bestanden, lees_markttool_bestand)
+
+markttool_data <- markttool_data |>
+  mutate(
+    jaar   = as.integer(jaar),
+    type   = factor(type, levels = c("import", "export")),
+    soort  = soort_van_beschrijving(beschrijving)
+  ) |>
+  relocate(jaar, type, eenheid, soort, bestand, .before = product_level_1)
+
+glimpse(markttool_data)
+```
+
+```{r check-eenheid, include=FALSE}
+markttool_data |>
+  count(eenheid, name = "aantal_rijen")
+```
+
+```{r overview-dims, include=FALSE}
+cat("Aantal rijen:", nrow(markttool_data), "\n")
+cat("Aantal kolommen:", ncol(markttool_data), "\n")
+cat("Jaren aanwezig:", paste(sort(unique(markttool_data$jaar)), collapse = ", "), "\n")
+cat("Types aanwezig:", paste(levels(markttool_data$type), collapse = ", "), "\n")
+cat("Aantal bronbestanden:", n_distinct(markttool_data$bestand), "\n")
+```
+
+```{r overview-per-jaar-type, include=FALSE}
+markttool_data |>
+  count(jaar, type, name = "aantal_rijen") |>
+  arrange(jaar, type)
+```
+
+```{r overview-missing, include=FALSE}
+markttool_data |>
+  summarise(
+    n              = n(),
+    missing_waarde = sum(is.na(waarde)),
+    missing_pct    = sum(is.na(pct_grand_total)),
+    .by = c(jaar, type)
+  ) |>
+  arrange(jaar, type)
+```
+
+```{r overview-unique-products, include=FALSE}
+markttool_data |>
+  summarise(
+    n_level1 = n_distinct(product_level_1),
+    n_level2 = n_distinct(product_level_2),
+    n_level3 = n_distinct(product_level_3),
+    n_level4 = n_distinct(product_level_4),
+    n_soort  = n_distinct(soort),
+    .by = type
+  )
+```
+
+```{r overview-totalen, include=FALSE}
+totalen <- markttool_data |>
+  filter(!is.na(waarde)) |>
+  summarise(totale_waarde = sum(waarde), .by = c(jaar, type)) |>
+  arrange(jaar, type)
+
+totalen
+```
+
+```{r overview-level1, include=FALSE}
+markttool_data |>
+  filter(!is.na(waarde)) |>
+  summarise(totale_waarde = sum(waarde), .by = c(jaar, type, product_level_1)) |>
+  arrange(jaar, type, desc(totale_waarde))
+```
+
+# Top 10 export producten
+
+```{r top10-export}
+top10_export <- markttool_data |>
+  filter(!is.na(waarde), type == "export", jaar == max(jaar)) |>
+  slice_max(order_by = waarde, n = 10) |>
+  select(jaar, product_level_3, waarde, pct_grand_total)
+
+top10_export
+```
+
+# Top 10 import producten
+
+```{r top10-import}
+top10_import <- markttool_data |>
+  filter(!is.na(waarde), type == "import", jaar == max(jaar)) |>
+  slice_max(order_by = waarde, n = 10) |>
+  select(jaar, product_level_3, waarde, pct_grand_total)
+
+top10_import
+```
+
+# Import versus export
+
+```{r plot-totalen, fig.width=8, fig.height=4.5}
+eenheid_label <- paste(unique(markttool_data$eenheid), collapse = " / ")
+
+ggplot(totalen, aes(x = factor(jaar), y = totale_waarde, fill = type)) +
+  geom_col(position = "dodge") +
+  scale_y_continuous(labels = label_number(scale = 1e-6, suffix = " mln")) +
+  labs(
+    title = paste("Totale handelswaarde (", eenheid_label, ") per jaar en type"),
+    x = "Jaar",
+    y = paste0("Totale waarde (", eenheid_label, ", mln)"),
+    fill = "Type"
+  ) +
+  theme_minimal()
+```
+
+# Top 10 soorten
+
+De soort wordt afgeleid uit het vrije-tekstveld `beschrijving`, op basis van
+een lijst met bekende (Engelse) soortnamen (zie sectie "Inleiding"). Dit is
+een heuristiek: producten waarin geen van de bekende soortnamen voorkomt,
+vallen in de categorie "Overig / onbekend".
+
+```{r top10-soort}
+soort_top10 <- markttool_data |>
+  filter(!is.na(waarde), jaar == max(jaar)) |>
+  summarise(waarde = sum(waarde), .by = c(soort, type)) |>
+  pivot_wider(names_from = type, values_from = waarde, values_fill = 0) |>
+  mutate(totaal = import + export) |>
+  arrange(desc(totaal)) |>
+  slice_head(n = 10)
+
+soort_top10
+```
+
+```{r plot-top10-soort, fig.width=8, fig.height=5}
+soort_top10 |>
+  select(soort, import, export) |>
+  pivot_longer(cols = c(import, export), names_to = "type", values_to = "waarde") |>
+  mutate(soort = factor(soort, levels = rev(soort_top10$soort))) |>
+  ggplot(aes(x = soort, y = waarde, fill = type)) +
+  geom_col() +
+  coord_flip() +
+  scale_y_continuous(labels = label_number(scale = 1e-6, suffix = " mln")) +
+  labs(
+    title = paste("Top 10 soorten -", max(markttool_data$jaar)),
+    x = NULL,
+    y = paste0("Waarde (", eenheid_label, ", mln)"),
+    fill = "Type"
+  ) +
+  theme_minimal()
+```
+
+```{r save-output, include=FALSE}
+saveRDS(markttool_data, file.path(data_dir, "markttool_data.rds"))
+writexl::write_xlsx(markttool_data, path = file.path(data_dir, "markttool_data.xlsx"))
+```

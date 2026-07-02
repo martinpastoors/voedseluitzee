@@ -1,0 +1,605 @@
+---
+title: "Vergelijking aanvoer, import en export per soort"
+subtitle: "AER (STECF) aanvoer versus Visfederatie Markttool import/export"
+author: ""
+date: "`r format(Sys.Date(), '%d %B %Y')`"
+output:
+  word_document:
+    reference_docx: "../report_template.dotx"
+    toc: true
+    toc_depth: 3
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo    = FALSE,
+  include = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.width  = 9,
+  fig.height = 5.5
+)
+
+library(tidyverse)
+library(readxl)
+library(janitor)
+library(scales)
+```
+
+# Inleiding
+
+Dit document combineert twee databronnen om aanvoer, import en export per soort
+te vergelijken:
+
+- **Aanvoer**: STECF AER-data — het gewicht dat Nederlandse vissersschepen
+  daadwerkelijk aanlanden (levend gewicht, alle gebieden), ongeacht waar het
+  vervolgens verkocht wordt.
+- **Import/export**: Visfederatie Markttool — de handelsstromen die de
+  Nederlandse grens over gaan, ongeacht wie de vis heeft gevangen of gekweekt.
+
+**Twee belangrijke kanttekeningen:**
+
+1. **Alleen gewicht, geen waarde.** De Markttool-download bevat een gewicht in
+   *WFE* (Whole Fish Equivalent, kg) maar geen geldbedrag. AER heeft wel een
+   waarde in euro's, maar om appels met appels te vergelijken gebruiken we
+   hier voor alle drie de stromen het **gewicht** (in ton).
+2. **Soortkoppeling is een heuristiek.** De Markttool levert geen soortcode,
+   alleen een vrije productomschrijving. Onderstaande code herkent
+   soortnamen via trefwoorden in die omschrijving en koppelt ze aan dezelfde
+   Nederlandse soortnamen als de AER-analyse. Soorten die niet door de
+   Nederlandse vloot worden aangevoerd maar wel veel geïmporteerd worden
+   (zalm, tonijn, pangasius, tilapia, alaska koolvis, ...) krijgen daardoor
+   terecht een aanvoer van (bijna) nul.
+
+# Instellingen
+
+```{r settings, include=FALSE}
+# Voorgesomde AER-aanvoer per jaar/gebied/soort (output van de AER-analyse)
+aer_landings_file <- r"(C:\Users\MartinPastoors\Martin Pastoors\WKC - Voedseluitzee\Data\AER_landings_NL.xlsx)"
+
+# Samengevoegde Markttool import/export-dataset (output van markttool_analyse.Rmd)
+markttool_file <- r"(C:\Users\MartinPastoors\Martin Pastoors\WKC - Voedseluitzee\Data\markttool_data.xlsx)"
+
+# Aantal soorten dat individueel getoond wordt; de rest wordt "Overige soorten"
+top_n_species <- 15
+```
+
+# Soortenlijst (gedeeld tussen AER en Markttool)
+
+```{r soorten-lookup, include=FALSE}
+# Zelfde tabel als in de AER-analyse: FAO-soortcode -> vaste Nederlandse naam.
+soort_lookup <- tribble(
+  ~species_code, ~soort_nl,
+
+  "SOL", "Tong",
+  "PLE", "Schol",
+  "TUR", "Tarbot",
+  "BLL", "Griet",
+  "DAB", "Schar",
+  "LEM", "Tongschar",
+  "FLE", "Bot",
+
+  "MUR", "Mul",
+  "COD", "Kabeljauw",
+  "GUU", "Rode poon",
+  "BSS", "Zeebaars",
+  "WHG", "Wijting",
+  "HKE", "Heek",
+  "GUR", "Poon",
+  "BRB", "Zeekarper",
+  "HAD", "Schelvis",
+  "MUL", "Mullen",
+  "NHA", "Noord Pacifische heek",
+
+  "HER", "Haring",
+  "MAC", "Makreel",
+  "WHB", "Blauwe wijting",
+  "JAX", "Horsmakreel (overig)",
+  "HOM", "Horsmakreel",
+  "PIL", "Sardien",
+  "ARU", "Grote zilversmelt",
+  "VMA", "Chub makreel",
+  "CJM", "Chileense horsmakreel",
+  "MAS", "Chub makreel (overig)",
+  "SPR", "Sprot",
+  "SME", "Spiering",
+  "ARY", "Kleine zilversmelt",
+  "ARG", "Zilversmelten",
+
+  "CSH", "Grijze garnaal",
+  "NEP", "Langoustine",
+
+  "LBE", "Kreeft",
+
+  "EQE", "Kleine zwaardschede",
+  "ULO", "Spisula",
+  "CRE", "Noordzeekrab",
+  "RAZ", "Scheermessen",
+  "ULT", "Spisula (subtruncata)",
+  "COC", "Kokkel",
+
+  "SQR", "Pijlinktvis (overig)",
+  "CTC", "Zeekat",
+  "SQU", "Inktvissen (overig)",
+  "SQS", "Vliegende inktvis",
+
+  "WHE", "Wulk",
+
+  "RJC", "Stekelrog",
+  "RJM", "Gevlekte rog",
+
+  "MON", "Zeeduivels"
+)
+
+# Trefwoordentabel voor de Markttool-omschrijving ("beschrijving"). Volgorde
+# is prioriteit: de eerste rij die matcht wint, dus specifieke/samengestelde
+# termen staan boven de generieke term waar ze een substring van zijn
+# (bv. "blue whiting" boven "whiting", "atlantic salmon" boven "salmon").
+markttool_soort_lookup <- tribble(
+  ~patroon,            ~species_code, ~soort_nl_extra,
+
+  # --- soorten die ook in de AER soort_lookup staan (koppelbaar op species_code) ---
+  "blue whiting",       "WHB", NA,
+  "chub mackerel",      "VMA", NA,
+  "horse mackerel",     "HOM", NA,
+  "mackerel",           "MAC", NA,
+  "herring",            "HER", NA,
+  "sardinella",         NA,    "Sardinella",
+  "sardine",            "PIL", NA,
+  "sprat",              "SPR", NA,
+  "brisling",           "SPR", NA,
+  "lemon sole",         "LEM", NA,
+  "sole",               "SOL", NA,
+  "plaice",             "PLE", NA,
+  "turbot",             "TUR", NA,
+  "brill",              "BLL", NA,
+  "dab",                "DAB", NA,
+  "flounder",           "FLE", NA,
+  "haddock",            "HAD", NA,
+  "hake",               "HKE", NA,
+  "gurnard",            "GUR", NA,
+  "mullet",             "MUR", NA,
+  "sea bass",           "BSS", NA,
+  "sea bream",          "BRB", NA,
+  "whiting",            "WHG", NA,
+  "cod",                "COD", NA,
+  "monkfish",           "MON", NA,
+  "anglerfish",         "MON", NA,
+  "argentine",          "ARU", NA,
+  "smelt",              "SME", NA,
+  "norway lobster",     "NEP", NA,
+  "scampi",             "NEP", NA,
+  "langoustine",        "NEP", NA,
+  "lobster",            "LBE", NA,
+  "crab",               "CRE", NA,
+  "shrimp",             "CSH", NA,
+  "prawn",              "CSH", NA,
+  "cockle",             "COC", NA,
+  "razor",              "RAZ", NA,
+  "cuttle fish",        "CTC", NA,
+  "squid",              "SQU", NA,
+  "whelk",              "WHE", NA,
+  "skate",              "RJM", NA,
+  "ray",                "RJM", NA,
+
+  # --- soorten die NIET in de AER soort_lookup staan (vnl. import/kweekvis) ---
+  "alaska pollack",     NA, "Alaska koolvis",
+  "pollack",            NA, "Koolvis",
+  "saithe",             NA, "Koolvis",
+  "coley",              NA, "Koolvis",
+  "atlantic salmon",    NA, "Zalm",
+  "pacific salmon",     NA, "Zalm",
+  "salmon",             NA, "Zalm",
+  "trout",              NA, "Forel",
+  "skipjack",           NA, "Tonijn",
+  "tuna",               NA, "Tonijn",
+  "bonito",             NA, "Tonijn",
+  "catfish",            NA, "Pangasius / Meerval",
+  "tilapia",            NA, "Tilapia",
+  "anchov",             NA, "Ansjovis",
+  "mussel",             NA, "Mossel",
+  "oyster",             NA, "Oester"
+)
+
+# Verwijdert tekst binnen "(excl. ...)": soorten die daar genoemd worden zijn
+# juist UITGESLOTEN van het product (vaak een restcategorie "overige ...
+# vis/schaaldieren, m.u.v. kabeljauw, blauwe wijting, ..."), dus die mogen
+# niet als trefwoord meetellen. De tweede stap vangt een afgekapte clausule
+# op (geen sluithaakje meer, bv. door een tekstlimiet) door alles na "(excl"
+# tot het einde van de tekst te verwijderen. Wordt gebruikt door zowel de
+# classificatie zelf als de QC-diagnose hieronder, zodat ze consistent zijn.
+strip_excl <- function(tekst) {
+  tekst |>
+    str_to_lower() |>
+    str_remove_all("\\(excl[^)]*\\)") |>
+    str_remove("\\(excl.*$")
+}
+
+# Vult species_code + soort_nl per beschrijving. Eerste treffende rij (van
+# boven naar beneden) wint. Geen enkele treffer -> "Overig / onbekend".
+# Sommige AER-soortcodes zijn in de praktijk in de Markttool-omschrijvingen
+# nauwelijks los van elkaar te herkennen (bv. de vier inktvis/zeekat-codes).
+# Die worden daarom in de hoofdvergelijking samengevoegd tot 1 herkenbare
+# naam, in plaats van als losse (en daardoor kunstmatig kleine) soorten.
+soort_groepen <- tribble(
+  ~species_code, ~soort_gegroepeerd,
+  "SQR", "Inktvissen & zeekatten",
+  "CTC", "Inktvissen & zeekatten",
+  "SQU", "Inktvissen & zeekatten",
+  "SQS", "Inktvissen & zeekatten"
+)
+
+groepeer_soort <- function(species_code, soort_nl) {
+  gegroepeerd <- soort_groepen$soort_gegroepeerd[match(species_code, soort_groepen$species_code)]
+  if_else(!is.na(gegroepeerd), gegroepeerd, soort_nl)
+}
+
+soort_van_beschrijving <- function(beschrijving) {
+  tekst_zoeken <- strip_excl(beschrijving)
+
+  n <- length(tekst_zoeken)
+
+  species_code   <- rep(NA_character_, n)
+  soort_nl_extra <- rep(NA_character_, n)
+  matched        <- rep(FALSE, n)   # <- houdt bij of een rij al vastligt
+
+  for (i in seq_len(nrow(markttool_soort_lookup))) {
+    nog_leeg <- !matched
+    if (!any(nog_leeg)) break
+    treft <- nog_leeg & str_detect(tekst_zoeken, fixed(markttool_soort_lookup$patroon[i]))
+    species_code[treft]   <- markttool_soort_lookup$species_code[i]
+    soort_nl_extra[treft] <- markttool_soort_lookup$soort_nl_extra[i]
+    matched[treft]        <- TRUE
+  }
+
+  # Voor treffers via een species_code die ook in soort_lookup staat: haal de
+  # officiele AER-naam op (zodat AER en Markttool exact dezelfde naam gebruiken).
+  soort_nl  <- soort_nl_extra
+  via_code  <- matched & is.na(soort_nl)
+  soort_nl[via_code] <- soort_lookup$soort_nl[match(species_code[via_code], soort_lookup$species_code)]
+
+  soort_nl[is.na(soort_nl)] <- "Overig / onbekend"
+
+  tibble(species_code = species_code, soort_nl = soort_nl)
+}
+```
+
+# AER-aanvoer inlezen
+
+```{r load-aer, include=FALSE}
+# Vooraf samengestelde NL-aanvoer (year, country_code, sub_reg, species_code,
+# species_name, live_weight_kg, value_euro, live_weight_t) - output van de
+# AER-analyse (aer_landings_nl), dus geen ruwe STECF-sheets meer nodig.
+aer_landings_nl <- read_excel(aer_landings_file) |> clean_names()
+
+# NL-aanvoer, alle gebieden samen, per jaar en soort
+aer_nl_all <- aer_landings_nl |>
+  group_by(year, species_code, species_name) |>
+  summarise(
+    live_weight_t = sum(live_weight_t, na.rm = TRUE),
+    value_euro    = sum(value_euro,    na.rm = TRUE),
+    .groups = "drop"
+  )
+```
+
+# Markttool import/export inlezen
+
+```{r load-markttool, include=FALSE}
+markttool_data <- read_excel(markttool_file) |>
+  mutate(type = factor(type, levels = c("import", "export")))
+
+# Soort afleiden uit de Markttool-beschrijving, consistent met de AER-namen
+markttool_data <- markttool_data |>
+  bind_cols(soort_van_beschrijving(markttool_data$beschrijving)) |>
+  filter(!is.na(waarde))
+```
+
+# Vergelijkingsdataset opbouwen
+
+```{r combineer, include=FALSE}
+# Aanvoer per jaar en soort, in ton
+aanvoer_soort <- aer_nl_all |>
+  left_join(soort_lookup, by = "species_code") |>
+  mutate(
+    soort_nl = coalesce(soort_nl, species_name),
+    soort_nl = groepeer_soort(species_code, soort_nl)
+  ) |>
+  group_by(jaar = year, soort_nl) |>
+  summarise(aanvoer_ton = sum(live_weight_t, na.rm = TRUE), .groups = "drop")
+
+# Import/export per jaar en soort, in ton (WFE-kg omgerekend naar ton)
+markttool_soort <- markttool_data |>
+  mutate(
+    soort_nl    = groepeer_soort(species_code, soort_nl),
+    gewicht_ton = waarde / 1000
+  ) |>
+  group_by(jaar, type, soort_nl) |>
+  summarise(gewicht_ton = sum(gewicht_ton, na.rm = TRUE), .groups = "drop") |>
+  pivot_wider(names_from = type, values_from = gewicht_ton, values_fill = 0) |>
+  rename(import_ton = import, export_ton = export)
+
+vergelijking <- full_join(aanvoer_soort, markttool_soort, by = c("jaar", "soort_nl")) |>
+  mutate(across(c(aanvoer_ton, import_ton, export_ton), ~ replace_na(.x, 0))) |>
+  arrange(jaar, desc(import_ton + export_ton + aanvoer_ton))
+```
+
+# Aanvoer, import en export per soort
+
+```{r vergelijking-top, include=FALSE}
+# "Overig / onbekend" (niet-herkende omschrijvingen) telt niet mee bij het
+# bepalen van de top-N soorten, en wordt straks samengevoegd met de
+# restcategorie tot één label.
+top_soorten <- vergelijking |>
+  filter(soort_nl != "Overig / onbekend") |>
+  group_by(soort_nl) |>
+  summarise(totaal = sum(aanvoer_ton + import_ton + export_ton), .groups = "drop") |>
+  slice_max(totaal, n = top_n_species, with_ties = FALSE) |>
+  arrange(desc(totaal)) |>
+  pull(soort_nl)
+
+vergelijking_plot <- vergelijking |>
+  mutate(soort_plot = if_else(soort_nl %in% top_soorten, soort_nl, "Overig / onbekend")) |>
+  group_by(jaar, soort_plot) |>
+  summarise(
+    aanvoer_ton = sum(aanvoer_ton),
+    import_ton  = sum(import_ton),
+    export_ton  = sum(export_ton),
+    .groups = "drop"
+  ) |>
+  pivot_longer(cols = c(aanvoer_ton, import_ton, export_ton),
+               names_to = "stroom", values_to = "ton") |>
+  mutate(
+    stroom     = recode(stroom, aanvoer_ton = "Aanvoer (AER)", import_ton = "Import", export_ton = "Export"),
+    stroom     = factor(stroom, levels = c("Aanvoer (AER)", "Import", "Export")),
+    soort_plot = factor(soort_plot, levels = c(top_soorten, "Overig / onbekend"))
+  )
+```
+
+```{r plot-vergelijking, fig.width=10, fig.height=6}
+laatste_jaar <- max(vergelijking_plot$jaar)
+
+vergelijking_plot |>
+  filter(jaar == laatste_jaar) |>
+  ggplot(aes(x = fct_rev(soort_plot), y = ton, fill = stroom)) +
+  geom_col(position = "dodge", width = 0.75) +
+  coord_flip() +
+  scale_y_continuous(labels = label_number(scale = 1e-3, suffix = " kt")) +
+  scale_fill_manual(values = c("Aanvoer (AER)" = "#2E7D32", "Import" = "#1565C0", "Export" = "#EF6C00")) +
+  labs(
+    title    = paste("Aanvoer, import en export per soort -", laatste_jaar),
+    subtitle = paste0("Top ", top_n_species, " soorten (naar totale stroom) + overig"),
+    x = NULL, y = "Gewicht (duizend ton)", fill = "Stroom"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "top")
+```
+
+## Tabel: aanvoer, import, export en handelsrol per soort
+
+De kolom `export_dekking` geeft aan hoe de exportstroom zich verhoudt tot de
+aanvoer: een waarde boven 100% betekent dat er meer wordt geëxporteerd dan er
+in Nederland wordt aangevoerd — een aanwijzing dat (deels) geïmporteerde vis
+wordt doorgevoerd/geëxporteerd.
+
+```{r tabel-vergelijking}
+vergelijking |>
+  filter(jaar == laatste_jaar) |>
+  mutate(
+    netto_handel    = import_ton - export_ton,
+    export_dekking   = if_else(aanvoer_ton > 0, export_ton / aanvoer_ton, NA_real_)
+  ) |>
+  arrange(desc(aanvoer_ton + import_ton + export_ton)) |>
+  slice_head(n = 25) |>
+  mutate(
+    across(c(aanvoer_ton, import_ton, export_ton, netto_handel), ~ round(.x, 0)),
+    export_dekking = percent(export_dekking, accuracy = 1)
+  ) |>
+  select(soort_nl, aanvoer_ton, import_ton, export_ton, netto_handel, export_dekking) |>
+  knitr::kable(
+    col.names = c("Soort", "Aanvoer (t)", "Import (t)", "Export (t)", "Netto handel (t)", "Exportdekking"),
+    format.args = list(big.mark = ".", decimal.mark = ",")
+  )
+```
+
+# Wat blijft er in Nederland (aanvoer + import − export)
+
+Het verschil tussen wat binnenkomt (aanvoer + import) en wat weer wordt
+geëxporteerd, is een grove schatting van wat er in Nederland "blijft":
+een mix van **binnenlandse consumptie**, **verwerkings-/snijverlies**
+(bijvoorbeeld filerering, waardoor het WFE-gewicht van het eindproduct lager
+is dan het gewicht dat als grondstof binnenkomt) en niet-geregistreerde
+voorraadmutaties. Het is dus geen zuiver consumptiecijfer, maar een
+massabalans-indicator. Omdat de Markttool-gewichten al in WFE zijn
+uitgedrukt — precies bedoeld om vergelijkbaar te zijn met aanvoercijfers —
+is deze optelling inhoudelijk consistent.
+
+Een negatieve waarde (meer export dan aanbod) kan wijzen op voorraadgebruik
+uit eerdere jaren, op afwijkingen tussen de AER- en Markttool-periodes, of op
+onvolledige soortherkenning in één van beide bronnen.
+
+```{r beschikbaarheid, include=FALSE}
+beschikbaarheid <- vergelijking |>
+  mutate(
+    aanbod_totaal       = aanvoer_ton + import_ton,
+    beschikbaar_nl       = aanbod_totaal - export_ton,
+    aandeel_beschikbaar  = if_else(aanbod_totaal > 0, beschikbaar_nl / aanbod_totaal, NA_real_)
+  )
+
+# Jaren die in dit overzicht getoond worden
+weergave_jaren <- 2022:2024
+
+beschikbaarheid_plot <- beschikbaarheid |>
+  filter(jaar %in% weergave_jaren) |>
+  mutate(soort_plot = if_else(soort_nl %in% top_soorten, soort_nl, "Overig / onbekend")) |>
+  group_by(jaar, soort_plot) |>
+  summarise(
+    aanbod_totaal = sum(aanbod_totaal),
+    export_ton    = sum(export_ton),
+    .groups = "drop"
+  ) |>
+  mutate(soort_plot = factor(soort_plot, levels = c(top_soorten, "Overig / onbekend")))
+```
+
+## Aanbod versus export per soort, per jaar
+
+De grijze balk is het totale aanbod (aanvoer + import); de oranje balk erin is
+wat daarvan weer wordt geëxporteerd. Het grijze stuk dat boven de oranje balk
+uitsteekt, is wat er (naar schatting) in Nederland blijft.
+
+```{r plot-beschikbaarheid, fig.width=12, fig.height=7}
+ggplot(beschikbaarheid_plot, aes(x = fct_rev(soort_plot))) +
+  geom_col(aes(y = aanbod_totaal, fill = "Aanbod (aanvoer + import)"), width = 0.75) +
+  geom_col(aes(y = export_ton, fill = "Export"), width = 0.4) +
+  coord_flip() +
+  facet_wrap(~jaar, ncol = 3) +
+  scale_y_continuous(labels = label_number(scale = 1e-3, suffix = " kt")) +
+  scale_fill_manual(name = NULL, values = c("Aanbod (aanvoer + import)" = "grey75", "Export" = "#EF6C00")) +
+  labs(
+    title    = "Aanbod (aanvoer + import) versus export per soort, 2022-2024",
+    subtitle = "Verschil tussen grijs en oranje = blijft (naar schatting) in NL.",
+    x = NULL, y = "Gewicht (duizend ton)"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "top")
+```
+
+## Tabel: wat blijft er in Nederland, per soort
+
+```{r tabel-beschikbaarheid}
+beschikbaarheid |>
+  filter(jaar == laatste_jaar) |>
+  arrange(desc(aanbod_totaal)) |>
+  slice_head(n = 25) |>
+  mutate(
+    across(c(aanvoer_ton, import_ton, aanbod_totaal, export_ton, beschikbaar_nl), ~ round(.x, 0)),
+    aandeel_beschikbaar = percent(aandeel_beschikbaar, accuracy = 1)
+  ) |>
+  select(soort_nl, aanvoer_ton, import_ton, aanbod_totaal, export_ton,
+         beschikbaar_nl, aandeel_beschikbaar) |>
+  knitr::kable(
+    col.names = c("Soort", "Aanvoer (t)", "Import (t)", "Aanbod totaal (t)",
+                  "Export (t)", "Blijft in NL (t)", "Aandeel"),
+    format.args = list(big.mark = ".", decimal.mark = ",")
+  )
+```
+
+## Totaal, alle soorten samen
+
+```{r totaal-beschikbaarheid}
+beschikbaarheid |>
+  filter(jaar == laatste_jaar) |>
+  summarise(
+    aanvoer_ton    = sum(aanvoer_ton),
+    import_ton     = sum(import_ton),
+    aanbod_totaal  = sum(aanbod_totaal),
+    export_ton     = sum(export_ton),
+    beschikbaar_nl = sum(beschikbaar_nl)
+  ) |>
+  mutate(
+    aandeel_beschikbaar = percent(beschikbaar_nl / aanbod_totaal, accuracy = 1),
+    across(c(aanvoer_ton, import_ton, aanbod_totaal, export_ton, beschikbaar_nl), ~ comma(round(.x, 0)))
+  ) |>
+  knitr::kable(
+    col.names = c("Aanvoer (t)", "Import (t)", "Aanbod totaal (t)",
+                  "Export (t)", "Blijft in NL (t)", "Aandeel")
+  )
+```
+
+# QC: inktvissen en zeekatten per jaar
+
+Overzicht van alle beschikbare gegevens voor pijlinktvis, zeekat, vliegende
+inktvis en "overige inktvissen" (AER-codes `SQR`, `CTC`, `SQU`, `SQS`), zowel
+uit AER (aanvoer) als uit de Markttool (import/export), per jaar. Handig om te
+controleren of de soortherkenning voor deze groep klopt.
+
+```{r qc-inktvis, include=FALSE}
+inktvis_codes <- soort_groepen$species_code
+inktvis_jaren <- 2022:2024
+
+aer_inktvis_totaal <- aer_nl_all |>
+  filter(species_code %in% inktvis_codes, year %in% inktvis_jaren) |>
+  group_by(jaar = year) |>
+  summarise(aanvoer_ton = sum(live_weight_t, na.rm = TRUE), .groups = "drop")
+
+markttool_inktvis_totaal <- markttool_data |>
+  filter(
+    species_code %in% inktvis_codes | soort_nl %in% c("Pijlinktvis", "Zeekat"),
+    jaar %in% inktvis_jaren
+  ) |>
+  mutate(gewicht_ton = waarde / 1000) |>
+  group_by(jaar, type) |>
+  summarise(gewicht_ton = sum(gewicht_ton, na.rm = TRUE), .groups = "drop") |>
+  pivot_wider(names_from = type, values_from = gewicht_ton, values_fill = 0)
+
+# Zorg dat beide kolommen bestaan, ook als een type in deze jaren ontbreekt
+if (!"import" %in% names(markttool_inktvis_totaal)) markttool_inktvis_totaal$import <- 0
+if (!"export" %in% names(markttool_inktvis_totaal)) markttool_inktvis_totaal$export <- 0
+
+inktvis_totaal <- tibble(jaar = inktvis_jaren) |>
+  left_join(aer_inktvis_totaal, by = "jaar") |>
+  left_join(markttool_inktvis_totaal, by = "jaar") |>
+  mutate(across(c(aanvoer_ton, import, export), ~ replace_na(.x, 0))) |>
+  arrange(jaar)
+
+# Beschrijvingen die aan inktvis/zeekat gekoppeld zijn, ter controle
+inktvis_beschrijvingen <- markttool_data |>
+  filter(species_code %in% inktvis_codes | soort_nl %in% c("Pijlinktvis", "Zeekat")) |>
+  distinct(soort_nl, beschrijving) |>
+  arrange(soort_nl, beschrijving)
+
+# Ter controle: omschrijvingen die wél naar inktvis/octopus/zeekat verwijzen
+# ná het weghalen van (excl. ...)-clausules, maar (nog) niet herkend worden
+# en dus in "Overig / onbekend" zitten. Restcategorieen die het woord alleen
+# in een excl.-clausule bevatten (bv. "molluscs, ... (excl. ... cuttle fish,
+# squid, octopus ...)") verschijnen hier terecht niet meer.
+inktvis_gemist <- markttool_data |>
+  filter(
+    soort_nl == "Overig / onbekend",
+    str_detect(strip_excl(beschrijving), "squid|cuttle|octopus|calamari|loligo|sepia|illex")
+  ) |>
+  distinct(beschrijving)
+```
+
+## Aanvoer, import en export, 2022-2024 (alle inktvis- en zeekatsoorten samen)
+
+```{r qc-inktvis-totaal}
+inktvis_totaal |>
+  mutate(across(c(aanvoer_ton, import, export), ~ round(.x, 0))) |>
+  knitr::kable(
+    col.names = c("Jaar", "Aanvoer AER (t)", "Import (t)", "Export (t)"),
+    format.args = list(big.mark = ".", decimal.mark = ",")
+  )
+```
+
+## Gekoppelde Markttool-omschrijvingen (controle)
+
+```{r qc-inktvis-beschrijvingen}
+inktvis_beschrijvingen |>
+  knitr::kable(col.names = c("Naam (NL)", "Beschrijving"))
+```
+
+## Mogelijk gemiste inktvis/octopus-omschrijvingen
+
+Deze omschrijvingen bevatten een inktvis/octopus-gerelateerd woord maar zijn
+(nog) niet herkend — check of hier iets bij zit dat aan de trefwoordentabel
+toegevoegd moet worden.
+
+```{r qc-inktvis-gemist}
+if (nrow(inktvis_gemist) == 0) {
+  cat("Geen gemiste omschrijvingen gevonden.\n")
+} else {
+  knitr::kable(inktvis_gemist, col.names = "Beschrijving")
+}
+```
+
+# Volgende stappen
+
+- Zodra er Markttool-downloads voor meerdere jaren beschikbaar zijn, toont
+  `vergelijking_plot` automatisch een paneel per jaar (via `facet_wrap(~jaar)`)
+  in plaats van alleen het laatste jaar.
+- Als een Markttool-download met waarde in euro's beschikbaar komt, kan
+  dezelfde opzet gebruikt worden om aanvoerwaarde, importwaarde en
+  exportwaarde te vergelijken in plaats van alleen gewicht.
+- Soorten in "Overig / onbekend" (geen trefwoord herkend) of zonder AER-code
+  kun je opzoeken door `markttool_data |> filter(soort_nl == "Overig / onbekend") |> count(beschrijving, sort = TRUE)`
+  te draaien, en vervolgens `markttool_soort_lookup` aan te vullen.

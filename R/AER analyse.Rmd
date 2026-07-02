@@ -1,0 +1,384 @@
+---
+title: "AER analyse NL visserij"
+subtitle: "STECF AER (2008–2024)"
+author: "Martin Pastoors"
+date: "`r format(Sys.Date(), '%d %B %Y')`"
+output:
+  word_document:
+    reference_docx: "../report_template.dotx"
+    toc: true
+    toc_depth: 3
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo    = FALSE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width  = 8,
+  fig.height = 5,
+  dpi        = 150
+)
+```
+
+<!-- =========================================================
+     LIBRARIES
+     ========================================================= -->
+
+```{r libraries}
+# Core
+library(tidyverse)
+library(lubridate)
+library(readxl)
+library(janitor)
+library(patchwork)    # combine panels for AER vs GFW comparison
+
+# Spatial (GFW section)
+library(sf)
+library(rnaturalearth)
+library(rnaturalearthdata)
+
+```
+
+<!-- =========================================================
+     SETTINGS — edit paths here
+     ========================================================= -->
+
+```{r settings}
+# ---- Directory paths --------------------------------------------------------
+aer_file    <- "C:/Users/MartinPastoors/Martin Pastoors/MPFF - General/PROJECTS/FLYSHOOT/STECF 2025-07_AER_data/STECF_25 07_EU Fleet Economic and Transversal data_fleet segment level.xlsx"
+out_dir     <- "C:/Users/MartinPastoors/Martin Pastoors/WKC - Voedseluitzee/resultaten"
+
+if (!dir.exists(out_dir))   dir.create(out_dir,   recursive = TRUE)
+
+aer_years_start <- 2008
+study_divisions_aer <- c("27.4.c", "27.4.b", "27.4.a")
+
+```
+
+<!-- =========================================================
+     HELPER FUNCTIONS
+     ========================================================= -->
+
+```{r helpers-gfw}
+load_object <- function(filepath, object_name) {
+  local({
+    e <- new.env()
+    load(filepath, envir = e)
+    e[[object_name]]
+  })
+}
+```
+
+```{r helpers-aer}
+map_gear_aer <- function(x) {
+  dplyr::recode(str_to_upper(str_trim(x)),
+    DTS = "Bottom trawl/seine", TBB = "Beam trawl",
+    PEL = "Midwater trawl",     DFN = "Gillnet",
+    HOK = "Handline/rod",       FPO = "Pot/trap",
+    DRB = "Dredge",             PS  = "Purse seine",
+    LL  = "Longline",
+    .default = "Other/mixed"
+  )
+}
+
+# Species group lookup — used in multiple landings plots
+assign_species_group <- function(species_code, species_name) {
+  sn <- tolower(species_name)
+  case_when(
+    str_detect(sn, "cuttlefish|sepia") |
+      species_code %in% c("CTC","CTL","CTZ","CTB","CTS","SEB","OCC")
+      ~ "Cuttlefish",
+    str_detect(sn, "squid|loligo|bobtail|ommastrep|shortfin") |
+      species_code %in% c("SQC","SQR","SQE","SQM","LOL","LOG","SQS","SQZ",
+                           "SQX","EUR","BOC","SQI","OMS","TOD","NBS","OMP","ILL")
+      ~ "Squid",
+    str_detect(sn, "mullet") |
+      species_code %in% c("MUL","MUG","TFM","MUT","MUX")
+      ~ "Mullets",
+    str_detect(sn, "gurnard|searobin") |
+      species_code %in% c("GUG","GUR","GUU","GUX","TUB","BIR")
+      ~ "Gurnards",
+    str_detect(sn, "^mackerel") |
+      species_code %in% c("MAC","MAS")
+      ~ "Mackerel",
+    str_detect(sn, "horse mackerel|scad") |
+      species_code %in% c("HOM","HMM","JAA","JAX")
+      ~ "Horse mackerel",
+    str_detect(sn, "whiting") |
+      species_code %in% c("WHG")
+      ~ "Whiting",
+    str_detect(sn, "scallop|pecten") |
+      species_code %in% c("SCE","QSC","PEC","SCA","SCB")
+      ~ "Scallops",
+    str_detect(sn, "whelk|buccinidae|buccinum") |
+      species_code %in% c("WHE","BUC")
+      ~ "Whelk",
+    TRUE ~ NA_character_
+  )
+}
+
+# Ordered factor levels for species groups
+species_group_levels <- c("Cuttlefish","Squid","Mullets","Gurnards",
+                           "Mackerel","Horse mackerel","Whiting","Scallops","Whelk")
+
+```
+
+
+<!-- =========================================================
+     DATA LOADING — with cache logic
+     ========================================================= -->
+
+```{r load-aer}
+
+  aer_landings_sheets <- bind_rows(
+    read_excel(aer_file, sheet = "FS_landings FAO 2008-2012") |> clean_names(),
+    read_excel(aer_file, sheet = "FS_landings FAO 2013-2017") |> clean_names(),
+    read_excel(aer_file, sheet = "FS_landings FAO 2018-2023") |> clean_names()
+  )
+
+  aer_landings_raw <- aer_landings_sheets |>
+    filter(!is.na(variable_code), !is.na(value)) |>
+    filter(country_code=="NLD") |>
+    mutate(
+      year          = as.integer(year),
+      sub_reg       = str_to_lower(str_trim(sub_reg)),
+      gear_category = map_gear_aer(fishing_tech)
+    ) |>
+    # Filter to study area BEFORE pivot
+    filter(grepl("^27", sub_reg)) |>
+    select(year, country_code, sub_reg, fishing_tech,
+           vessel_length, gear_category,
+           species_code, species_name,
+           variable_code, value) |>
+    pivot_wider(names_from = variable_code, values_from = value,
+                values_fn = sum) |>
+    rename(live_weight_kg = totwghtlandg,
+           value_euro     = totvallandg) |>
+    mutate(live_weight_t = live_weight_kg / 1000)
+
+
+  aer_landings_summary <- aer_landings_raw |>
+    group_by(year, country_code, gear_category,
+             sub_reg, species_code, species_name) |>
+    summarise(
+      live_weight_t = sum(live_weight_t, na.rm = TRUE),
+      value_euro    = sum(value_euro,    na.rm = TRUE),
+      .groups = "drop"
+    )
+
+```
+
+
+<!-- =========================================================
+     DOCUMENT BODY
+     ========================================================= -->
+
+---
+
+# 1. Summary
+
+*[To be written after finalisation of all chapters.]*
+
+Key points to address:
+
+- Trends in total fishing effort in ICES 4.c/7.d/7.e (2008–present) from STECF AER data.
+- Spatial patterns and concentration of effort from GFW data (2013–present).
+- Position of the Vrolijk flyshoot fleet relative to total fleet activity.
+- Stock status, MSC certification and current management concerns.
+- Compliance with the 2024 gentlemen's agreement.
+- Evidence-based sustainability position and key messages.
+
+---
+
+# 2. Introduction
+
+## 2.1 Background
+
+The flyshoot (Danish seine) fishery has come under increasing public and media scrutiny in recent years, including critical coverage in the Netherlands (e.g. Follow the Money). At the same time, 2024 saw a new multilateral gentlemen's agreement on flyshoot fishing in the eastern Channel, and the scallop fishery in the same area received MSC certification. This study brings together available quantitative data and scientific knowledge to provide an objective, evidence-based assessment of the sustainability position of the flyshoot fleet operating in the Channel.
+
+This report was commissioned by Vrolijk and builds directly on the methodology developed in the earlier Flyshoot project, in which Global Fishing Watch (GFW) data and STECF data were used to analyse fleet-level fishing effort trends in the Channel.
+
+## 2.2 Objectives
+
+- To quantify trends in fishing effort and landings in the Channel (2008/2013–present) using official STECF statistics (AER), with spatial distribution characterised using GFW AIS data.
+- To compile a scientifically grounded overview of the fisheries in the Channel, with particular focus on sustainability, ecosystem effects and the positioning of the flyshoot fishery.
+
+## 2.3 Study area and scope
+
+The study covers ICES divisions 27.4.c (southern North Sea), 27.7.d (eastern English Channel) and 27.7.e (western English Channel). The period of analysis is 2008–present for effort and landings trends (AER) and 2013–present for spatial analysis (GFW).
+
+---
+
+# 3. Material & Methods
+
+## 3.1 STECF AER data (effort and landings trends)
+
+The Annual Economic Report (AER) data were obtained from the STECF 25-07 data release (*EU Fleet Economic and Transversal data, fleet segment level*). The AER provides fishing effort (fishing days, sea days, kW-days, GT-days) and landed weight and value by fleet segment (country × fishing technique × vessel length class), disaggregated by ICES sub-region. Three separate tab-level datasets covering 2008–2012, 2013–2017 and 2018–2023 were concatenated to form a consistent time series.
+
+Effort is expressed primarily as fishing days. Capacity-weighted effort (Section 4.1.2) uses GT-fishing days where reported; for countries that report only kW-fishing days, GT-fishing days are imputed using a fleet-average kW-to-GT conversion ratio of `r kw_to_gt_ratio` (GT per kW), derived from fleet segments in the AER that report both metrics. Imputed values are flagged in the figure.
+
+## 3.2 GFW data (spatial effort distribution and concentration)
+
+Fishing activity data were retrieved via the Global Fishing Watch (GFW) API (`gfwr` v3.0) using the Events endpoint. Vessel metadata (flag state, gear type, gross tonnage) were obtained from the GFW vessel registry. The GFW data are used **exclusively for spatial analysis** — effort density maps, spatial hotspots, and effort concentration metrics. All computationally expensive spatial objects (KDE grids, gridded effort, concentration metrics) are stored in a dedicated cache file (`cache_gfw_spatial.RData`) to avoid recomputation on each knit.
+
+## 3.3 STECF FDI data (reference only)
+
+The STECF FDI dataset was obtained but is not used as a primary analysis source (see table below). The AER provides more complete and consistent country-level data for the same period.
+
+```{r fdi-note-table}
+tibble::tibble(
+  `FDI table` = c("Effort","Landings","Catches","Capacity"),
+  `Key issue` = c(
+    "Substantial confidentiality suppression in key strata",
+    "EU-aggregated only — no country breakdown",
+    "Country-level but with suppressed cells; partial AER overlap",
+    "No division breakdown — national totals only"),
+  `Decision` = rep("Not used", 4)
+) |> knitr::kable(caption = "Table 1. STECF FDI data quality issues and reason for exclusion.")
+```
+
+## 3.4 The 2024 Gentlemen's Agreement
+
+Brief description of the November 2024 multilateral agreement between VisNed (NL), Rederscentrale (BE) and CNPMEM (FR) governing flyshoot fishing in ICES 27.7.d, and its predecessor (April 2021). Key provisions: the 8-sea-day limit per 14-day period, technical gear specifications, and the monitoring obligation. Used as a reference framework for interpreting the fishing effort data in Chapter 4.
+
+---
+
+# 4. Results: Fishing Effort and Landings
+
+## 4.2 Landings trends — STECF AER
+
+
+```{r aer-landings-total, fig.height=6, fig.cap="Figure 4. Landed weight (t) in ICES 4.c/7.d/7.e by country and gear category (AER, 2008–2023)."}
+aer_landings_summary |>
+  group_by(year, country_code, gear_category) |>
+  summarise(live_weight_t=sum(live_weight_t, na.rm=TRUE), .groups="drop") |>
+  ggplot(aes(x=year, y=live_weight_t, colour=country_code)) +
+  geom_line() + geom_point(size=1.5) +
+  scale_x_continuous(breaks=seq(min(aer_landings_summary$year), max(aer_landings_summary$year), by=2)) +
+  scale_y_continuous(limits=c(0,NA), expand=expansion(mult=c(0,0.05))) +
+  facet_wrap(~gear_category) +
+  labs(title="AER — Landed weight by gear category",
+       x="Year", y="Landed weight (t)", colour="Country") +
+  theme_bw() +
+  theme(strip.text=element_text(size=7), axis.text.x=element_text(angle=45, hjust=1))
+```
+
+### 4.2.2 Key species groups — landings by country
+
+```{r aer-landings-species-country, fig.width=10, fig.height=7, fig.cap="Figure 5. Landings by key species group and country (AER, 2008–2023). Bars show stacked country contributions per year."}
+aer_landings_summary |>
+  mutate(species_group = assign_species_group(species_code, species_name)) |>
+  filter(!is.na(species_group)) |>
+  group_by(year, country_code, species_group) |>
+  summarise(live_weight_t=sum(live_weight_t, na.rm=TRUE), .groups="drop") |>
+  complete(year, country_code, species_group, fill=list(live_weight_t=0)) |>
+  mutate(country_code  = factor(country_code, levels=c("FRA","GBR","NLD","BEL")),
+         species_group = factor(species_group, levels=species_group_levels)) |>
+  ggplot(aes(x=year, y=live_weight_t, fill=country_code)) +
+  geom_col(position="stack", width=0.8) +
+  scale_fill_brewer(palette="Set1") +
+  scale_x_continuous(breaks=seq(aer_years_start, 2024, by=2)) +
+  scale_y_continuous(limits=c(0,NA), expand=expansion(mult=c(0,0.05))) +
+  facet_wrap(~species_group, nrow=3) +
+  labs(title="AER — Landings by key species group and country",
+       subtitle=paste("Divisions:", paste(study_divisions_aer, collapse=" & ")),
+       caption="Countries stacked additively",
+       x="Year", y="Landed weight (t)", fill="Country") +
+  theme_bw() +
+  theme(axis.text.x=element_text(angle=45, hjust=1),
+        strip.text=element_text(size=7), legend.position="bottom")
+```
+
+### 4.2.3 Key species groups — landings by gear category
+
+```{r aer-landings-species-gear, fig.width=10, fig.height=7, fig.cap="Figure 6. Landings by key species group and gear category (AER, 2008–2023). Bars show stacked gear contributions per year across all countries."}
+aer_landings_summary |>
+  mutate(species_group = assign_species_group(species_code, species_name)) |>
+  filter(!is.na(species_group)) |>
+  group_by(year, gear_category, species_group) |>
+  summarise(live_weight_t=sum(live_weight_t, na.rm=TRUE), .groups="drop") |>
+  complete(year, gear_category, species_group, fill=list(live_weight_t=0)) |>
+  mutate(species_group = factor(species_group, levels=species_group_levels)) |>
+  ggplot(aes(x=year, y=live_weight_t, fill=gear_category)) +
+  geom_col(position="stack", width=0.8) +
+  scale_fill_brewer(palette="Set2") +
+  scale_x_continuous(breaks=seq(aer_years_start, 2024, by=2)) +
+  scale_y_continuous(limits=c(0,NA), expand=expansion(mult=c(0,0.05))) +
+  facet_wrap(~species_group, nrow=3) +
+  labs(title="AER — Landings by key species group and gear category",
+       subtitle=paste("Divisions:", paste(study_divisions_aer, collapse=" & ")),
+       caption="All countries combined",
+       x="Year", y="Landed weight (t)", fill="Gear category") +
+  theme_bw() +
+  theme(axis.text.x=element_text(angle=45, hjust=1),
+        strip.text=element_text(size=7), legend.position="bottom")
+```
+
+### 4.2.4 Focal species × focal gears
+
+
+```{r aer-landings-focal, fig.width=11, fig.height=8, fig.cap="Figure 7. Landings of focal species by focal gear category in ICES 4.c/7.d/7.e (AER, 2008–2023). Each panel shows one species group; colours represent gear categories. Only gear categories accounting for >1% of total landings for that species in the study area are shown. Free y-axis per species group."}
+focal_species <- c("Cuttlefish","Squid","Gurnards","Mullets","Scallops","Whelk")
+
+aer_landings_summary |>
+  filter(country_code %in% c("FRA","GBR","NLD","BEL"),
+         sub_reg %in% study_divisions_aer,          # study area only
+         year < 2024) |>
+  mutate(species_group = assign_species_group(species_code, species_name)) |>
+  filter(!is.na(species_group), species_group %in% focal_species,
+         gear_category %in% focal_gears) |>
+  group_by(year, gear_category, species_group) |>
+  summarise(live_weight_t=sum(live_weight_t, na.rm=TRUE), .groups="drop") |>
+  # Drop gear × species combos that never reach 1% of that species' total
+  group_by(species_group, gear_category) |>
+  mutate(gear_total = sum(live_weight_t)) |>
+  group_by(species_group) |>
+  mutate(species_total = sum(live_weight_t),
+         gear_pct = gear_total / species_total * 100) |>
+  ungroup() |>
+  filter(gear_pct >= 1) |>
+  complete(year, gear_category, species_group, fill=list(live_weight_t=0)) |>
+  mutate(species_group = factor(species_group, levels=focal_species)) |>
+  ggplot(aes(x=year, y=live_weight_t, fill=gear_category)) +
+  geom_col(position="stack", width=0.8) +
+  scale_fill_brewer(palette="Set2") +
+  scale_x_continuous(breaks=seq(aer_years_start, 2024, by=2)) +
+  scale_y_continuous(limits=c(0,NA), expand=expansion(mult=c(0,0.05))) +
+  facet_wrap(~species_group, nrow=2, scales="free_y") +
+  labs(title    = "AER — Focal species landings by gear category",
+       subtitle = paste0("Study area: ICES ", paste(study_divisions_aer, collapse=" & "),
+                         "  |  FRA, GBR, NLD, BEL combined"),
+       caption  = "Only gears ≥1% of species total shown. Free y-axis per species group.",
+       x="Year", y="Landed weight (t)", fill="Gear category") +
+  theme_bw() +
+  theme(axis.text.x=element_text(angle=45, hjust=1),
+        strip.text=element_text(size=8), legend.position="bottom")
+```
+
+### 4.2.5 Top species by landed weight
+
+```{r aer-landings-top-species, fig.height=5, fig.cap="Figure 8. Top 15 species by total landed weight in ICES 4.c/7.d/7.e across FRA, GBR, NLD and BEL (AER, 2008–2023)."}
+aer_landings_summary |>
+  group_by(species_code, species_name) |>
+  summarise(total_t=sum(live_weight_t, na.rm=TRUE), .groups="drop") |>
+  slice_max(total_t, n=15) |>
+  mutate(species_label = paste0(species_name," (",species_code,")"),
+         species_label = fct_reorder(species_label, total_t)) |>
+  ggplot(aes(x=total_t/1000, y=species_label)) +
+  geom_col(fill="#4E79A7") +
+  scale_x_continuous(limits=c(0,NA), expand=expansion(mult=c(0,0.03))) +
+  labs(title    = "AER — Top 15 species by total landed weight",
+       subtitle = paste0("Study area: ICES ", paste(study_divisions_aer, collapse=" & "),
+                         "  |  FRA, GBR, NLD, BEL  |  2008–2023"),
+       x="Total landed weight (1000 t)", y="") +
+  theme_bw()
+```
+
+
+
+# Session information
+
+```{r session-info}
+sessionInfo()
+```

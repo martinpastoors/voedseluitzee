@@ -1,0 +1,788 @@
+---
+title: "AER analyse Nederlandse visserij"
+subtitle: "STECF AER (2008–2024) — vangsten en waarde per soort"
+author: "Martin Pastoors"
+date: "`r format(Sys.Date(), '%d %B %Y')`"
+output:
+  word_document:
+    reference_docx: "../report_template.dotx"
+    toc: true
+    toc_depth: 3
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo    = FALSE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width  = 9,
+  fig.height = 5,
+  dpi        = 150
+)
+```
+
+<!-- =========================================================
+     LIBRARIES
+     ========================================================= -->
+
+```{r libraries}
+library(tidyverse)
+library(readxl)
+library(janitor)
+library(patchwork)   # combineert panelen + gedeelde legenda
+library(scales)       # percent_format() voor de percentage-panelen
+```
+
+<!-- =========================================================
+     SETTINGS — edit paths here
+     ========================================================= -->
+
+```{r settings}
+aer_file <- "C:/Users/MartinPastoors/Martin Pastoors/MPFF - General/PROJECTS/FLYSHOOT/STECF 2025-07_AER_data/STECF_25 07_EU Fleet Economic and Transversal data_fleet segment level.xlsx"
+out_dir  <- "C:/Users/MartinPastoors/Martin Pastoors/WKC - Voedseluitzee/resultaten"
+
+if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
+
+aer_years_start <- 2008
+
+# ICES-gebieden die samen de Noordzee vormen in de AER "sub_reg" codering
+north_sea_divisions <- c("27.4.a", "27.4.b", "27.4.c", "27.7.d")
+
+# Aantal soorten dat individueel getoond wordt; de rest wordt samengevoegd tot "Overig"
+top_n_species <- 15
+```
+
+<!-- =========================================================
+     SOORTEN-VERTAALTABEL EN KLEURENSCHEMA
+     =========================================================
+     `soort_lookup`: vaste Nederlandse naam, visserijgroep en volgorde-
+     binnen-groep per FAO-soortcode (op basis van de top-50 soorten naar
+     waarde, aangeleverd door de gebruiker). Volgorde 1 = grootste waarde
+     binnen de groep -> krijgt de meest verzadigde/donkerste kleur;
+     hogere volgordenummers krijgen geleidelijk een lichtere, minder
+     verzadigde tint van dezelfde kleurfamilie.
+
+     `groep_instellingen`: per visserijgroep een vaste kleurfamilie (hue)
+     in HCL-kleurruimte, met een chroma- en helderheidsbereik. Door zowel
+     chroma als helderheid (én een klein beetje hue) te laten variëren
+     over de soorten in een groep, ontstaan grotere, beter te
+     onderscheiden kleurverschillen dan bij een simpele lineaire
+     kleurgradiënt.
+
+     Uitbreiden: voeg een rij toe aan soort_lookup met species_code,
+     soort_nl, groep (moet voorkomen in groep_instellingen) en volgorde.
+     ========================================================= -->
+
+```{r soorten-lookup}
+soort_lookup <- tribble(
+  ~species_code, ~soort_nl,                ~groep,             ~volgorde,
+
+  # --- Platvis --------------------------------------------------------------
+  "SOL", "Tong",                     "Platvis",             1,
+  "PLE", "Schol",                    "Platvis",             2,
+  "TUR", "Tarbot",                   "Platvis",             3,
+  "BLL", "Griet",                    "Platvis",             4,
+  "DAB", "Schar",                    "Platvis",             5,
+  "LEM", "Tongschar",                "Platvis",             6,
+  "FLE", "Bot",                      "Platvis",             7,
+
+  # --- Rondvis ----------------------------------------------------------------
+  "MUR", "Mul",                      "Rondvis",             1,
+  "COD", "Kabeljauw",                "Rondvis",             2,
+  "GUU", "Rode poon",                "Rondvis",             3,
+  "BSS", "Zeebaars",                 "Rondvis",             4,
+  "WHG", "Wijting",                  "Rondvis",             5,
+  "HKE", "Heek",                     "Rondvis",             6,
+  "GUR", "Poon",                     "Rondvis",             7,
+  "BRB", "Zeekarper",                "Rondvis",             8,
+  "HAD", "Schelvis",                 "Rondvis",             9,
+  "MUL", "Mullen",                   "Rondvis",            10,
+  "NHA", "Noord Pacifische heek",    "Rondvis",            11,
+
+  # --- Pelagische vis -----------------------------------------------------------
+  "HER", "Haring",                   "Pelagische vis",      1,
+  "MAC", "Makreel",                  "Pelagische vis",      2,
+  "WHB", "Blauwe wijting",           "Pelagische vis",      3,
+  "JAX", "Horsmakreel (overig)",     "Pelagische vis",      4,
+  "HOM", "Horsmakreel",              "Pelagische vis",      5,
+  "PIL", "Sardien",                  "Pelagische vis",      6,
+  "ARU", "Grote zilversmelt",        "Pelagische vis",      7,
+  "VMA", "Chub makreel",             "Pelagische vis",      8,
+  "CJM", "Chileense horsmakreel",    "Pelagische vis",      9,
+  "MAS", "Chub makreel (overig)",    "Pelagische vis",     10,
+  "SPR", "Sprot",                    "Pelagische vis",     11,
+  "SME", "Spiering",                 "Pelagische vis",     12,
+  "ARY", "Kleine zilversmelt",       "Pelagische vis",     13,
+  "ARG", "Zilversmelten",            "Pelagische vis",     14,
+
+  # --- Garnalen ---------------------------------------------------------------
+  "CSH", "Grijze garnaal",           "Garnalen",            1,
+  "NEP", "Langoustine",              "Garnalen",            2,
+
+  # --- Kreeften -----------------------------------------------------------------
+  "LBE", "Kreeft",                   "Kreeften",            1,
+
+  # --- Schaaldieren (schelpdieren) ---------------------------------------------
+  "EQE", "Kleine zwaardschede",      "Schaaldieren",        1,
+  "ULO", "Spisula",                  "Schaaldieren",        2,
+  "CRE", "Noordzeekrab",             "Schaaldieren",        3,
+  "RAZ", "Scheermessen",             "Schaaldieren",        4,
+  "ULT", "Spisula (subtruncata)",    "Schaaldieren",        5,
+  "COC", "Kokkel",                   "Schaaldieren",        6,
+
+  # --- Inktvissen ---------------------------------------------------------------
+  "SQR", "Pijlinktvis (overig)",     "Inktvissen",          1,
+  "CTC", "Zeekat",                   "Inktvissen",          2,
+  "SQU", "Inktvissen (overig)",      "Inktvissen",          3,
+  "SQS", "Vliegende inktvis",        "Inktvissen",          4,
+
+  # --- Weekdieren -----------------------------------------------------------------
+  "WHE", "Wulk",                     "Weekdieren",          1,
+
+  # --- Haaien en roggen -----------------------------------------------------------
+  "RJC", "Stekelrog",                "Haaien en roggen",    1,
+  "RJM", "Gevlekte rog",             "Haaien en roggen",    2,
+
+  # --- Overige soorten --------------------------------------------------------------
+  "MON", "Zeeduivels",               "Overige soorten",     1
+)
+
+# Per visserijgroep: hue (kleurfamilie, 0-360 in HCL) en het bereik van chroma
+# (verzadiging) en luminantie (helderheid) waarover de soorten binnen die groep
+# verspreid worden. hue_drift geeft een kleine hue-verschuiving over de
+# soorten binnen de groep mee, wat de kleuren nog beter onderscheidbaar maakt.
+groep_instellingen <- tribble(
+  ~groep,               ~hue, ~chroma_start, ~chroma_eind, ~lum_start, ~lum_eind, ~hue_drift,
+  "Platvis",             250,   95,           20,           25,        85,        15,   # blauw
+  "Rondvis",             135,   85,           15,           22,        85,        15,   # groen
+  "Pelagische vis",       38,   95,           20,           28,        88,        20,   # oranje
+  "Garnalen",            330,   85,           30,           35,        82,        10,   # roze/magenta
+  "Kreeften",              8,   75,           75,           42,        42,         0,   # rood
+  "Schaaldieren",        285,   80,           15,           28,        85,        15,   # paars
+  "Inktvissen",          195,   80,           20,           28,        85,        15,   # turkoois
+  "Weekdieren",           68,   65,           65,           42,        42,         0,   # olijf/goud
+  "Haaien en roggen",      0,   15,            5,           25,        75,         0,   # grijs (achromatisch)
+  "Overige soorten",      48,   55,           20,           35,        78,        10    # bruin/zand
+)
+
+# Genereert n kleuren binnen een groep: chroma en luminantie lopen (samen met
+# een kleine hue-verschuiving) op van "donker/verzadigd" (soort 1, meest
+# waardevol) naar "licht/gedempt" (laatste soort in de groep).
+maak_groep_kleuren <- function(n, hue, chroma_start, chroma_eind, lum_start, lum_eind, hue_drift) {
+  if (n <= 1) {
+    return(grDevices::hcl(h = hue, c = chroma_start, l = lum_start))
+  }
+  stap <- seq(0, 1, length.out = n)
+  grDevices::hcl(
+    h = hue   + stap * hue_drift,
+    c = chroma_start + stap * (chroma_eind - chroma_start),
+    l = lum_start     + stap * (lum_eind     - lum_start)
+  )
+}
+
+# Bouw per soort een vaste kleur. Belangrijk: eerst sorteren op volgorde
+# binnen de groep, zodat maak_groep_kleuren() de juiste (donker -> licht)
+# kleur aan de juiste soort toekent.
+species_colors_df <- soort_lookup |>
+  left_join(groep_instellingen, by = "groep") |>
+  arrange(groep, volgorde) |>
+  group_by(groep) |>
+  mutate(
+    kleur = maak_groep_kleuren(
+      n            = n(),
+      hue          = hue[1],
+      chroma_start = chroma_start[1],
+      chroma_eind  = chroma_eind[1],
+      lum_start    = lum_start[1],
+      lum_eind     = lum_eind[1],
+      hue_drift    = hue_drift[1]
+    )
+  ) |>
+  ungroup()
+
+# Vaste volgorde van groepen in legenda's, facetten en gestapelde balken
+groep_volgorde <- groep_instellingen$groep
+
+# Naslagtabel: species_code -> vaste kleur (gebruikt in alle grafieken)
+species_colors_master <- setNames(species_colors_df$kleur, species_colors_df$species_code)
+```
+
+```{r toon-kleurenschema, eval=FALSE, fig.cap="Overzicht", fig.height=6, include=FALSE}
+species_colors_df |>
+  mutate(
+    groep = factor(groep, levels = rev(groep_volgorde)),
+    label = coalesce(soort_nl, species_code)
+  ) |>
+  ggplot(aes(x = -volgorde, y = groep, fill = kleur)) +
+  geom_tile(width = 0.9, height = 0.85, colour = "white") +
+  geom_text(aes(label = label), size = 2.6) +
+  scale_fill_identity() +
+  labs(title = "Vast kleurenschema per soort", x = NULL, y = NULL) +
+  theme_minimal() +
+  theme(axis.text.x = element_blank(), panel.grid = element_blank())
+```
+
+<!-- =========================================================
+     DATA LOADING
+     ========================================================= -->
+
+```{r load-aer}
+aer_landings_sheets <- bind_rows(
+  read_excel(aer_file, sheet = "FS_landings FAO 2008-2012") |> clean_names(),
+  read_excel(aer_file, sheet = "FS_landings FAO 2013-2017") |> clean_names(),
+  read_excel(aer_file, sheet = "FS_landings FAO 2018-2023") |> clean_names()
+)
+
+# Alle Nederlandse (NLD) aanvoer, Noordoost-Atlantisch (FAO-gebied 27)
+# De Noordzee-subset wordt hieronder afgeleid.
+aer_landings_nl <- aer_landings_sheets |>
+  filter(!is.na(variable_code), !is.na(value)) |>
+  filter(country_code == "NLD") |>
+  filter(grepl("^27", sub_reg)) |>
+  mutate(
+    year    = as.integer(year),
+    sub_reg = str_to_lower(str_trim(sub_reg))
+  ) |>
+  select(year, country_code, sub_reg,
+         species_code, species_name,
+         variable_code, value) |>
+  pivot_wider(names_from = variable_code, values_from = value, values_fn = sum) |>
+  rename(live_weight_kg = totwghtlandg,
+         value_euro     = totvallandg) |>
+  mutate(live_weight_t = live_weight_kg / 1000)
+
+# Overzicht 1: NL-aanvoer, alle gebieden samen
+aer_nl_all <- aer_landings_nl |>
+  group_by(year, species_code, species_name) |>
+  summarise(
+    live_weight_t = sum(live_weight_t, na.rm = TRUE),
+    value_euro    = sum(value_euro,    na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Overzicht 2: NL-aanvoer, alleen Noordzee (ICES 4.a/4.b/4.c)
+aer_nl_ns <- aer_landings_nl |>
+  filter(sub_reg %in% north_sea_divisions) |>
+  group_by(year, species_code, species_name) |>
+  summarise(
+    live_weight_t = sum(live_weight_t, na.rm = TRUE),
+    value_euro    = sum(value_euro,    na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# writexl::write_xlsx(aer_landings_nl, path=file.path(r"(C:\Users\MartinPastoors\Martin Pastoors\WKC - Voedseluitzee\Data)", "AER_landings_NL.xlsx"))
+
+# Leesbare Nederlandse labels per ICES-divisie (in vaste weergavevolgorde)
+divisie_labels <- c(
+  "27.4.a" = "4.a — Noordelijke Noordzee",
+  "27.4.b" = "4.b — Centrale Noordzee",
+  "27.4.c" = "4.c — Zuidelijke Noordzee",
+  "27.7.d" = "7.d — Oostelijk Kanaal"
+)
+
+# Vaste kleur per ICES-divisie (los van het soorten-kleurenschema)
+divisie_kleuren <- c(
+  "4.a — Noordelijke Noordzee" = "#4C72B0",
+  "4.b — Centrale Noordzee"    = "#55A868",
+  "4.c — Zuidelijke Noordzee"  = "#C44E52",
+  "7.d — Oostelijk Kanaal"     = "#8172B2"
+)
+
+# Overzicht 3: NL-aanvoer, Noordzee(+7d), uitgesplitst per ICES-divisie
+aer_nl_ns_divisie <- aer_landings_nl |>
+  filter(sub_reg %in% north_sea_divisions) |>
+  mutate(divisie = recode(sub_reg, !!!divisie_labels)) |>
+  group_by(year, divisie) |>
+  summarise(
+    live_weight_t = sum(live_weight_t, na.rm = TRUE),
+    value_euro    = sum(value_euro,    na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  complete(year, divisie, fill = list(live_weight_t = 0, value_euro = 0)) |>
+  mutate(divisie = factor(divisie, levels = unname(divisie_labels)))
+
+# Overzicht 4: NL-aanvoer, Noordzee(+7d), per divisie ÉN per soort
+# (basis voor de 4-panelen-per-divisie figuren 3.4/3.5)
+aer_nl_ns_divisie_soort <- aer_landings_nl |>
+  filter(sub_reg %in% north_sea_divisions) |>
+  mutate(
+    divisie = recode(sub_reg, !!!divisie_labels),
+    divisie = factor(divisie, levels = unname(divisie_labels))
+  ) |>
+  group_by(year, divisie, species_code, species_name) |>
+  summarise(
+    live_weight_t = sum(live_weight_t, na.rm = TRUE),
+    value_euro    = sum(value_euro,    na.rm = TRUE),
+    .groups = "drop"
+  )
+
+```
+
+<!-- =========================================================
+     HELPER FUNCTIES — top N soorten + "Overig", vaste kleuren, plotten
+     ========================================================= -->
+
+```{r helpers-topn}
+# Reduceert een jaar x soort tabel tot de top_n soorten (op basis van het totaal
+# over alle jaren) plus een verzamelcategorie "Overig". Voegt de vaste
+# Nederlandse naam en visserijgroep toe (via soort_lookup); onbekende soorten
+# (niet in soort_lookup) behouden de AER-naam (Engels).
+prepare_topn_species <- function(df, metric_col, top_n = top_n_species) {
+
+  df <- df |>
+    left_join(soort_lookup |> select(species_code, soort_nl, groep), by = "species_code") |>
+    mutate(
+      soort_naam  = coalesce(soort_nl, species_name),
+      soort_label = paste0(soort_naam, " (", species_code, ")"),
+      groep       = if_else(is.na(groep), "Overige soorten", groep)
+    )
+
+  species_totals <- df |>
+    group_by(species_code, soort_label, groep) |>
+    summarise(total = sum(.data[[metric_col]], na.rm = TRUE), .groups = "drop") |>
+    arrange(desc(total))
+
+  top_species <- species_totals |>
+    slice_max(total, n = top_n, with_ties = FALSE)
+
+  top_codes <- top_species$species_code
+
+  # Vaste weergavevolgorde: eerst op visserijgroep (Platvis, Rondvis, ...),
+  # daarna op volgorde-binnen-groep (= kleurgradatie), zodat gelijke kleuren
+  # ook in legenda/facetten bij elkaar staan. "Overig" staat altijd laatst.
+  label_volgorde <- top_species |>
+    left_join(soort_lookup |> select(species_code, volgorde), by = "species_code") |>
+    mutate(
+      groep    = factor(groep, levels = groep_volgorde),
+      volgorde = if_else(is.na(volgorde), 99, volgorde)
+    ) |>
+    arrange(groep, volgorde) |>
+    pull(soort_label)
+
+  df |>
+    mutate(
+      species_code_plot = if_else(species_code %in% top_codes, species_code, "OVERIG"),
+      species_label      = if_else(species_code %in% top_codes, soort_label, "Overig"),
+      species_label       = factor(species_label, levels = c(label_volgorde, "Overig"))
+    ) |>
+    group_by(year, species_code_plot, species_label) |>
+    summarise(value = sum(.data[[metric_col]], na.rm = TRUE), .groups = "drop") |>
+    complete(year, nesting(species_code_plot, species_label), fill = list(value = 0))
+}
+
+topn_weight <- aer_nl_all |>
+  prepare_topn_species("live_weight_t") 
+
+topn_value <- aer_nl_all |>
+  prepare_topn_species("value_euro") 
+
+# Haalt voor de soorten in df_plot de vaste kleur op uit species_colors_master.
+# "Overig" is altijd grijs; soorten zonder vaste kleur (niet in soort_lookup
+# én niet in de top-N) krijgen een neutraal grijs als noodgreep.
+get_fixed_palette <- function(df_plot) {
+  crosswalk <- df_plot |> distinct(species_code_plot, species_label)
+  kleuren <- species_colors_master[crosswalk$species_code_plot]
+  kleuren[crosswalk$species_code_plot == "OVERIG"] <- "grey70"
+  kleuren[is.na(kleuren)] <- "grey50"
+  setNames(kleuren, crosswalk$species_label)
+}
+
+# Gestapelde, gekleurde bar chart: jaar op x-as, soorten gestapeld.
+plot_topn_species <- function(df_plot, y_label, title_txt, subtitle_txt = NULL) {
+
+  pal <- get_fixed_palette(df_plot)
+
+  ggplot(df_plot, aes(x = year, y = value, fill = species_label)) +
+    geom_col(width = 0.8, colour = "white", linewidth = 0.1) +
+    scale_fill_manual(values = pal, name = "Soort") +
+    scale_x_continuous(breaks = seq(aer_years_start, max(df_plot$year), by = 2)) +
+    scale_y_continuous(limits = c(0, NA), expand = expansion(mult = c(0, 0.05))) +
+    labs(title = title_txt, subtitle = subtitle_txt, x = "Jaar", y = y_label) +
+    theme_bw() +
+    theme(
+      axis.text.x     = element_text(angle = 45, hjust = 1),
+      legend.position = "right",
+      legend.text     = element_text(size = 8),
+      legend.key.size = unit(0.4, "cm")
+    )
+}
+
+# Zelfde als hierboven, maar als facetted plot (één paneel per soort) —
+# handig wanneer de soorten in een gestapelde balk te veel op elkaar lijken
+# of wanneer je per soort een eigen (vrije) y-as wilt.
+plot_topn_species_faceted <- function(df_plot, y_label, title_txt, subtitle_txt = NULL,
+                                       scales = "free_y", ncol = NULL) {
+
+  pal <- get_fixed_palette(df_plot)
+
+  ggplot(df_plot, aes(x = year, y = value, fill = species_label)) +
+    geom_col(width = 0.8, colour = "white", linewidth = 0.1) +
+    scale_fill_manual(values = pal, name = "Soort", guide = "none") +
+    scale_x_continuous(breaks = seq(aer_years_start, max(df_plot$year), by = 4)) +
+    scale_y_continuous(limits = c(0, NA), expand = expansion(mult = c(0, 0.05))) +
+    labs(title = title_txt, subtitle = subtitle_txt, x = "Jaar", y = y_label) +
+    facet_wrap(~species_label, scales = scales, ncol = ncol) +
+    theme_bw() +
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1, size = 7),
+      strip.text  = element_text(size = 8, face = "bold")
+    )
+}
+
+# ---------------------------------------------------------------------------
+# Gecombineerd 4-panelen overzicht: gewicht en waarde, elk zowel absoluut als
+# procentueel, met ÉÉN gedeelde legenda. Omdat gewicht en waarde losse
+# rangordes kunnen opleveren (de grootste soort in gewicht is niet per se de
+# grootste in waarde), wordt de top-N hier op ÉÉN vaste metric bepaald
+# (`rank_by`) en gebruikt voor alle vier de panelen, zodat de legenda voor
+# alle panelen identiek is.
+# ---------------------------------------------------------------------------
+
+# Zelfde selectielogica als prepare_topn_species(), maar bewaart gewicht ÉN
+# waarde voor exact dezelfde top-N soorten (geselecteerd op basis van
+# `rank_by`), zodat gewicht- en waardepanelen een gedeelde legenda delen.
+prepare_topn_species_combined <- function(df, top_n = top_n_species,
+                                           rank_by = c("value_euro", "live_weight_t")) {
+  rank_by <- match.arg(rank_by)
+
+  df <- df |>
+    left_join(soort_lookup |> select(species_code, soort_nl, groep), by = "species_code") |>
+    mutate(
+      soort_naam  = coalesce(soort_nl, species_name),
+      soort_label = paste0(soort_naam, " (", species_code, ")"),
+      groep       = if_else(is.na(groep), "Overige soorten", groep)
+    )
+
+  species_totals <- df |>
+    group_by(species_code, soort_label, groep) |>
+    summarise(total = sum(.data[[rank_by]], na.rm = TRUE), .groups = "drop") |>
+    arrange(desc(total))
+
+  top_species <- species_totals |> slice_max(total, n = top_n, with_ties = FALSE)
+  top_codes   <- top_species$species_code
+
+  label_volgorde <- top_species |>
+    left_join(soort_lookup |> select(species_code, volgorde), by = "species_code") |>
+    mutate(
+      groep    = factor(groep, levels = groep_volgorde),
+      volgorde = if_else(is.na(volgorde), 99, volgorde)
+    ) |>
+    arrange(groep, volgorde) |>
+    pull(soort_label)
+
+  df |>
+    mutate(
+      species_code_plot = if_else(species_code %in% top_codes, species_code, "OVERIG"),
+      species_label      = if_else(species_code %in% top_codes, soort_label, "Overig"),
+      species_label      = factor(species_label, levels = c(label_volgorde, "Overig"))
+    ) |>
+    group_by(year, species_code_plot, species_label) |>
+    summarise(
+      live_weight_t = sum(live_weight_t, na.rm = TRUE),
+      value_euro    = sum(value_euro,    na.rm = TRUE),
+      .groups = "drop"
+    ) |>
+    complete(year, nesting(species_code_plot, species_label),
+             fill = list(live_weight_t = 0, value_euro = 0))
+}
+
+# Eén gestapelde balk, absoluut (position = "stack") of procentueel
+# (position = "fill", y-as als percentage van het jaartotaal).
+plot_stack <- function(df_plot, metric_col, y_label, title_txt, pct = FALSE) {
+
+  pal <- get_fixed_palette(df_plot)
+
+  p <- ggplot(df_plot, aes(x = year, y = .data[[metric_col]], fill = species_label)) +
+    geom_col(width = 0.8, colour = "white", linewidth = 0.1,
+             position = if (pct) "fill" else "stack") +
+    scale_fill_manual(values = pal, name = "Soort") +
+    scale_x_continuous(breaks = seq(aer_years_start, max(df_plot$year), by = 2)) +
+    labs(title = title_txt, x = "Jaar", y = y_label) +
+    theme_bw() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+  if (pct) {
+    p + scale_y_continuous(labels = scales::percent_format(accuracy = 1),
+                            expand = expansion(mult = c(0, 0.02)))
+  } else {
+    p + scale_y_continuous(limits = c(0, NA), expand = expansion(mult = c(0, 0.05)))
+  }
+}
+
+# Bouwt het 4-panelen overzicht (2x2): gewicht absoluut | gewicht %
+#                                       waarde  absoluut | waarde  %
+# met patchwork::plot_layout(guides = "collect") voor één gedeelde legenda.
+combi_4paneel <- function(df, top_n = top_n_species, rank_by = "value_euro",
+                           titel_gewicht = "Levend gewicht per soort",
+                           titel_waarde  = "Aanvoerwaarde per soort") {
+
+  df_plot <- df |>
+    prepare_topn_species_combined(top_n = top_n, rank_by = rank_by) |>
+    mutate(value_euro_mln = value_euro / 1e6)
+
+  p_gewicht_abs <- plot_stack(df_plot, "live_weight_t",  "Levend gewicht (t)", titel_gewicht, pct = FALSE)
+  p_gewicht_pct <- plot_stack(df_plot, "live_weight_t",  "Aandeel",            paste(titel_gewicht, "(%)"), pct = TRUE)
+  p_waarde_abs  <- plot_stack(df_plot, "value_euro_mln", "Waarde (mln EUR)",   titel_waarde, pct = FALSE)
+  p_waarde_pct  <- plot_stack(df_plot, "value_euro_mln", "Aandeel",            paste(titel_waarde, "(%)"), pct = TRUE)
+
+  (p_gewicht_abs + p_gewicht_pct) / (p_waarde_abs + p_waarde_pct) +
+    plot_layout(guides = "collect") &
+    theme(
+      legend.position = "right",
+      legend.text     = element_text(size = 7),
+      legend.key.size = unit(0.35, "cm")
+    )
+}
+
+# ---------------------------------------------------------------------------
+# 4-panelen overzicht per ICES-DIVISIE (i.p.v. per metric): elk paneel is één
+# divisie, met dezelfde top-N soorten en dezelfde vaste kleuren/legenda in elk
+# paneel. Toont steeds maar één metric (gewicht ÓF waarde), altijd absoluut
+# (geen percentage-versie).
+# ---------------------------------------------------------------------------
+
+# Zelfde selectielogica als prepare_topn_species(), maar de top-N wordt over
+# ALLE divisies samen bepaald (niet per divisie apart), zodat elk paneel
+# exact dezelfde soorten en dus dezelfde legenda gebruikt.
+prepare_topn_species_by_divisie <- function(df, metric_col, top_n = top_n_species) {
+
+  df <- df |>
+    left_join(soort_lookup |> select(species_code, soort_nl, groep), by = "species_code") |>
+    mutate(
+      soort_naam  = coalesce(soort_nl, species_name),
+      soort_label = paste0(soort_naam, " (", species_code, ")"),
+      groep       = if_else(is.na(groep), "Overige soorten", groep)
+    )
+
+  species_totals <- df |>
+    group_by(species_code, soort_label, groep) |>
+    summarise(total = sum(.data[[metric_col]], na.rm = TRUE), .groups = "drop") |>
+    arrange(desc(total))
+
+  top_species <- species_totals |> slice_max(total, n = top_n, with_ties = FALSE)
+  top_codes   <- top_species$species_code
+
+  label_volgorde <- top_species |>
+    left_join(soort_lookup |> select(species_code, volgorde), by = "species_code") |>
+    mutate(
+      groep    = factor(groep, levels = groep_volgorde),
+      volgorde = if_else(is.na(volgorde), 99, volgorde)
+    ) |>
+    arrange(groep, volgorde) |>
+    pull(soort_label)
+
+  df |>
+    mutate(
+      species_code_plot = if_else(species_code %in% top_codes, species_code, "OVERIG"),
+      species_label      = if_else(species_code %in% top_codes, soort_label, "Overig"),
+      species_label      = factor(species_label, levels = c(label_volgorde, "Overig"))
+    ) |>
+    group_by(year, divisie, species_code_plot, species_label) |>
+    summarise(value = sum(.data[[metric_col]], na.rm = TRUE), .groups = "drop") |>
+    complete(year, divisie, nesting(species_code_plot, species_label), fill = list(value = 0))
+}
+
+# Bouwt één paneel per divisie (gestapelde balk, absoluut) en combineert ze
+# met patchwork tot een 2x2 raster met gedeelde legenda.
+plot_divisie_4paneel <- function(df_plot, y_label, titel = NULL) {
+
+  pal      <- get_fixed_palette(df_plot)
+  divisies <- levels(df_plot$divisie)
+
+  panelen <- purrr::map(divisies, function(d) {
+    ggplot(dplyr::filter(df_plot, divisie == d),
+           aes(x = year, y = value, fill = species_label)) +
+      geom_col(width = 0.8, colour = "white", linewidth = 0.1) +
+      scale_fill_manual(values = pal, name = "Soort") +
+      scale_x_continuous(breaks = seq(aer_years_start, max(df_plot$year), by = 4)) +
+      scale_y_continuous(limits = c(0, NA), expand = expansion(mult = c(0, 0.05))) +
+      labs(title = d, x = "Jaar", y = y_label) +
+      theme_bw() +
+      theme(
+        axis.text.x = element_text(angle = 45, hjust = 1, size = 7),
+        plot.title  = element_text(size = 10, face = "bold")
+      )
+  })
+
+  wrap_plots(panelen, ncol = 2) +
+    plot_layout(guides = "collect") +
+    plot_annotation(title = titel) &
+    theme(
+      legend.position = "right",
+      legend.text     = element_text(size = 7),
+      legend.key.size = unit(0.35, "cm")
+    )
+}
+
+# Eén metric (gewicht ÓF waarde), 4 panelen (één per divisie), altijd absoluut.
+combi_4divisie <- function(df, metric_col, y_label, titel, top_n = top_n_species) {
+  df |>
+    prepare_topn_species_by_divisie(metric_col, top_n = top_n) |>
+    plot_divisie_4paneel(y_label = y_label, titel = titel)
+}
+```
+
+<!-- =========================================================
+     DOCUMENT BODY
+     ========================================================= -->
+
+---
+
+# 1. Nederlandse vangsten — Noordoost Atlantische oceaan
+
+Onderstaande figuren tonen de totale Nederlandse (NLD) vangsten (levend gewicht) en aanvoerwaarde per soort en per jaar, over alle door de STECF AER geregistreerde gebieden in de Noordoost Atlantische oceaan. De `r top_n_species` soorten met de grootste bijdrage worden individueel getoond; alle overige soorten zijn samengevoegd tot "Overig". Kleuren zijn vast per soort en per visserijgroep. Binnen elke groep loopt de kleur van donker/verzadigd (belangrijkste soort) naar licht/gedempt.
+
+
+## 1.1 Vangsten (gewicht)
+
+```{r nl-all-weight, fig.cap="Figuur 1. Nederlandse vangsten (levend gewicht, t) per soort en jaar, alle gebieden (AER)."}
+aer_nl_all |>
+  prepare_topn_species("live_weight_t") |>
+  plot_topn_species(
+    y_label      = "Levend gewicht (t)",
+    title_txt    = "NL vangsten per soort — alle gebieden",
+    subtitle_txt = paste0("Top ", top_n_species, " soorten + overig")
+  )
+```
+
+## 1.2 Waarde
+
+```{r nl-all-value, fig.cap="Figuur 2. Nederlandse aanvoerwaarde (EUR) per soort en jaar, alle gebieden (AER)."}
+aer_nl_all |>
+  mutate(value_euro_mln = value_euro / 1e6) |>
+  prepare_topn_species("value_euro_mln") |>
+  plot_topn_species(
+    y_label      = "Waarde (mln EUR)",
+    title_txt    = "NL aanvoerwaarde per soort — alle gebieden",
+    subtitle_txt = paste0("Top ", top_n_species, " soorten + overig")
+  )
+```
+
+---
+
+# 2. Nederlandse vangsten — Noordzee
+
+Dezelfde analyse, nu beperkt tot de Noordzee (ICES-gebieden 27.4.a, 27.4.b en 27.4.c).
+
+## 2.1 Vangsten (gewicht)
+
+```{r nl-ns-weight, fig.cap="Figuur 3. Nederlandse vangsten (levend gewicht, t) per soort en jaar, Noordzee (AER)."}
+aer_nl_ns |>
+  prepare_topn_species("live_weight_t") |>
+  plot_topn_species(
+    y_label      = "Levend gewicht (t)",
+    title_txt    = "NL vangsten per soort — Noordzee",
+    subtitle_txt = paste0("ICES 4.a/4.b/4.c  |  Top ", top_n_species, " soorten + overig")
+  )
+```
+
+## 2.2 Waarde
+
+```{r nl-ns-value, fig.cap="Figuur 4. Nederlandse aanvoerwaarde (EUR) per soort en jaar, Noordzee (AER)."}
+aer_nl_ns |>
+  mutate(value_euro_mln = value_euro / 1e6) |>
+  prepare_topn_species("value_euro_mln") |>
+  plot_topn_species(
+    y_label      = "Waarde (mln EUR)",
+    title_txt    = "NL aanvoerwaarde per soort — Noordzee",
+    subtitle_txt = paste0("ICES 4.a/4.b/4.c  |  Top ", top_n_species, " soorten + overig")
+  )
+```
+
+## 2.3 Waarde per soort (facetted)
+
+Zelfde gegevens als 2.2, maar per soort in een eigen paneel met vrije y-as — handig om ook de kleinere soorten goed te kunnen aflezen.
+
+```{r nl-ns-value-facet, fig.width=11, fig.height=9, fig.cap="Figuur 5. Nederlandse aanvoerwaarde (EUR) per soort en jaar, Noordzee (AER), per soort uitgesplitst."}
+aer_nl_ns |>
+  mutate(value_euro_mln = value_euro / 1e6) |>
+  prepare_topn_species("value_euro_mln") |>
+  plot_topn_species_faceted(
+    y_label      = "Waarde (mln EUR)",
+    title_txt    = "NL aanvoerwaarde per soort — Noordzee",
+    subtitle_txt = paste0("ICES 4.a/4.b/4.c  |  Top ", top_n_species, " soorten + overig"),
+    scales       = "free_y"
+  )
+```
+
+---
+
+# 3. Gecombineerd overzicht: gewicht en waarde (absoluut en procentueel)
+
+De vier panelen hieronder tonen dezelfde onderliggende data vanuit vier invalshoeken — levend gewicht en aanvoerwaarde, elk zowel in absolute eenheden als in procentuele aandelen per jaar — met **één gedeelde legenda**. Omdat de belangrijkste soorten in gewicht niet dezelfde zijn als de belangrijkste soorten in waarde, is de top-N hier op één vaste metric bepaald (standaard: waarde) zodat alle vier de panelen precies dezelfde soorten en kleuren gebruiken.
+
+## 3.1 Noordoost Atlantische oceaan
+
+```{r combi-all, fig.width=13, fig.height=10, fig.cap="Figuur 6. Nederlandse vangsten en aanvoerwaarde per soort en jaar, alle gebieden (AER). Boven: levend gewicht (absoluut/procentueel). Onder: aanvoerwaarde (absoluut/procentueel). Top-N op basis van waarde."}
+combi_4paneel(
+  aer_nl_all,
+  rank_by       = "value_euro",
+  titel_gewicht = "NL vangsten per soort — alle gebieden",
+  titel_waarde  = "NL aanvoerwaarde per soort — alle gebieden"
+)
+```
+
+## 3.2 Noordzee + 7d
+
+```{r combi-ns, fig.width=13, fig.height=10, fig.cap="Figuur 7. Nederlandse vangsten en aanvoerwaarde per soort en jaar, Noordzee (AER). Boven: levend gewicht (absoluut/procentueel). Onder: aanvoerwaarde (absoluut/procentueel). Top-N op basis van waarde."}
+combi_4paneel(
+  aer_nl_ns,
+  rank_by       = "value_euro",
+  titel_gewicht = "NL vangsten per soort — Noordzee + 7d",
+  titel_waarde  = "NL aanvoerwaarde per soort — Noordzee + 7d"
+)
+```
+
+## 3.3 Noordzee + 7d (per ICES divisie)
+
+```{r ns-divisie, fig.cap="Figuur 8. Nederlandse vangsten (levend gewicht, t) in de Noordzee en het oostelijk Kanaal, per ICES-divisie en jaar (AER)."}
+aer_nl_ns_divisie |>
+  ggplot(aes(x = year, y = live_weight_t, fill = divisie)) +
+  geom_col(width = 0.8, colour = "white", linewidth = 0.1) +
+  scale_fill_manual(values = divisie_kleuren, name = "ICES-divisie") +
+  scale_x_continuous(breaks = seq(aer_years_start, max(aer_nl_ns_divisie$year), by = 2)) +
+  scale_y_continuous(limits = c(0, NA), expand = expansion(mult = c(0, 0.05))) +
+  labs(
+    title    = "NL vangsten per ICES-divisie",
+    subtitle = "Noordzee (4.a/4.b/4.c) + oostelijk Kanaal (7.d)",
+    x        = "Jaar",
+    y        = "Levend gewicht (t)"
+  ) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+## 3.4 Vangsten per soort, per divisie (gewicht)
+
+Zelfde opzet als 3.2, maar nu is elk paneel één ICES-divisie in plaats van één metric. Alle vier de panelen gebruiken dezelfde top-N soorten (bepaald over alle divisies samen) en dus dezelfde legenda. Alleen levend gewicht, geen percentages.
+
+```{r divisie-weight, fig.width=13, fig.height=10, fig.cap="Figuur 9. Nederlandse vangsten (levend gewicht, t) per soort en jaar, per ICES-divisie (Noordzee + 7d, AER)."}
+aer_nl_ns_divisie_soort |>
+  combi_4divisie(
+    metric_col = "live_weight_t",
+    y_label    = "Levend gewicht (t)",
+    titel      = "NL vangsten per soort — per ICES-divisie"
+  )
+```
+
+## 3.5 Aanvoerwaarde per soort, per divisie
+
+Zelfde opzet als 3.4, nu voor aanvoerwaarde.
+
+```{r divisie-value, fig.width=13, fig.height=10, fig.cap="Figuur 10. Nederlandse aanvoerwaarde (mln EUR) per soort en jaar, per ICES-divisie (Noordzee + 7d, AER)."}
+aer_nl_ns_divisie_soort |>
+  mutate(value_euro_mln = value_euro / 1e6) |>
+  combi_4divisie(
+    metric_col = "value_euro_mln",
+    y_label    = "Waarde (mln EUR)",
+    titel      = "NL aanvoerwaarde per soort — per ICES-divisie"
+  )
+```
+
+---
+
+# Session information
+
+```{r session-info}
+sessionInfo()
+```
