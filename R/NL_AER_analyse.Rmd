@@ -30,7 +30,8 @@ library(tidyverse)
 library(readxl)
 library(janitor)
 library(patchwork)   # combineert panelen + gedeelde legenda
-library(scales)       # percent_format() voor de percentage-panelen
+library(scales) 
+library(ggimage)      # percent_format() voor de percentage-panelen
 ```
 
 <!-- =========================================================
@@ -38,8 +39,11 @@ library(scales)       # percent_format() voor de percentage-panelen
      ========================================================= -->
 
 ```{r settings}
-aer_file <- "C:/Users/MartinPastoors/Martin Pastoors/MPFF - General/PROJECTS/FLYSHOOT/STECF 2025-07_AER_data/STECF_25 07_EU Fleet Economic and Transversal data_fleet segment level.xlsx"
-out_dir  <- "C:/Users/MartinPastoors/Martin Pastoors/WKC - Voedseluitzee/resultaten"
+#aer_file <- "C:/Users/MartinPastoors/Martin Pastoors/MPFF - General/PROJECTS/FLYSHOOT/STECF 2025-07_AER_data/STECF_25 07_EU Fleet Economic and Transversal data_fleet segment level.xlsx"
+#out_dir  <- "C:/Users/MartinPastoors/Martin Pastoors/WKC - Voedseluitzee/resultaten"
+aer_file <- "C:/Users/riel014/OneDrive - Wageningen University & Research/PhD laptop Backup/Projects/Noordzee/STECF_25-07_AER_data/STECF_25 07_EU Fleet Economic and Transversal data_fleet segment level.xlsx"
+nutr_file<- "Nutrients_overzicht_sources.xlsx"
+out_dir  <- "resultaten"
 
 if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
 
@@ -233,6 +237,10 @@ aer_landings_sheets <- bind_rows(
   read_excel(aer_file, sheet = "FS_landings FAO 2018-2023") |> clean_names()
 )
 
+nutr_fish <- read_excel(nutr_file, sheet = "Sheet2") |> clean_names()
+
+
+
 # Alle Nederlandse (NLD) aanvoer, Noordoost-Atlantisch (FAO-gebied 27)
 # De Noordzee-subset wordt hieronder afgeleid.
 aer_landings_nl <- aer_landings_sheets |>
@@ -270,7 +278,7 @@ aer_nl_ns <- aer_landings_nl |>
     .groups = "drop"
   )
 
-# writexl::write_xlsx(aer_landings_nl, path=file.path(r"(C:\Users\MartinPastoors\Martin Pastoors\WKC - Voedseluitzee\Data)", "AER_landings_NL.xlsx"))
+# writexl::write_xlsx(aer_landings_nl, path=file.path(r"(C:/Users/MartinPastoors/Martin Pastoors/WKC - Voedseluitzee/Data)", "AER_landings_NL.xlsx"))
 
 # Leesbare Nederlandse labels per ICES-divisie (in vaste weergavevolgorde)
 divisie_labels <- c(
@@ -322,7 +330,7 @@ aer_nl_ns_divisie_soort <- aer_landings_nl |>
      HELPER FUNCTIES — top N soorten + "Overig", vaste kleuren, plotten
      ========================================================= -->
 
-```{r helpers-topn}
+```{r helpers-topn2}
 # Reduceert een jaar x soort tabel tot de top_n soorten (op basis van het totaal
 # over alle jaren) plus een verzamelcategorie "Overig". Voegt de vaste
 # Nederlandse naam en visserijgroep toe (via soort_lookup); onbekende soorten
@@ -374,7 +382,73 @@ topn_weight <- aer_nl_all |>
   prepare_topn_species("live_weight_t") 
 
 topn_value <- aer_nl_all |>
-  prepare_topn_species("value_euro") 
+  prepare_topn_species("value_euro")
+
+
+    # Nutrienten en edible yield 
+    # Gemiddelde laatste 5 jaar voor plots 
+
+aer_nl_all_nutr<-aer_nl_all |> 
+  left_join(nutr_fish,by="species_code") |> 
+  mutate(prot_t=live_weight_t*1e6*yield/100*protein/100/365/17.2e6,
+         omega_t=live_weight_t*1e6*yield/100*omega/100/365/17.2e6)
+
+topn_prot_aer_nl <-aer_nl_all_nutr |>
+  prepare_topn_species("prot_t") 
+
+topn_omega_aer_nl <-aer_nl_all_nutr |>
+  prepare_topn_species("omega_t") 
+
+
+topn_prot_aer_nl<-topn_prot_aer_nl |> 
+  mutate(value=value/(56*0.4)*100)
+
+topn_omega_aer_nl<-topn_omega_aer_nl |> 
+  mutate(value=value/0.2*100)
+
+
+aer_nl_all_nutr_ns<-aer_nl_ns |> 
+  left_join(nutr_fish,by="species_code") |> 
+  mutate(prot_t=live_weight_t*1e6*yield/100*protein/100/365/17.2e6,
+         omega_t=live_weight_t*1e6*yield/100*omega/100/365/17.2e6) 
+  
+  
+topn_prot_aer_nl_ns <-aer_nl_all_nutr_ns |>
+  prepare_topn_species("prot_t") |> 
+  mutate(value=value/(56*0.4)*100)
+
+topn_omega_aer_nl_ns <-aer_nl_all_nutr_ns |>
+  prepare_topn_species("omega_t")  |> 
+  mutate(value=value/0.2*100)
+
+
+mean_5_years<-function(df) {
+  df |> 
+    filter(year>2009) |> 
+    group_by(species_code_plot,species_label) |> 
+    summarise(value=mean(value), .groups = "drop")
+}
+
+mean_topn_omega_aer_nl_ns<-topn_omega_aer_nl_ns |> 
+  mean_5_years() |> 
+  mutate(Location="North sea")
+
+mean_topn_protein_aer_nl_ns<-topn_prot_aer_nl_ns |> 
+  mean_5_years()|> 
+  mutate(Location="North sea")
+
+mean_topn_omega_aer_nl<-topn_omega_aer_nl|> 
+  mean_5_years()|> 
+  mutate(Location="All regions")
+
+mean_topn_protein_aer_nl<-topn_prot_aer_nl |> 
+  mean_5_years()|> 
+  mutate(Location="All regions")
+
+#vergelijk noordzee met nederland
+mean_topn_protein_aer_merge<-mean_topn_protein_aer_nl_ns |> rbind(mean_topn_protein_aer_nl)
+mean_topn_omega_aer_merge<-mean_topn_omega_aer_nl |> rbind(mean_topn_omega_aer_nl_ns)
+ 
 
 # Haalt voor de soorten in df_plot de vaste kleur op uit species_colors_master.
 # "Overig" is altijd grijs; soorten zonder vaste kleur (niet in soort_lookup
@@ -406,7 +480,25 @@ plot_topn_species <- function(df_plot, y_label, title_txt, subtitle_txt = NULL) 
       legend.key.size = unit(0.4, "cm")
     )
 }
-
+# Gestapelde, gekleurde bar chart voor nutrienten of volume vergelijking tussen gebieden: gebied op x-as, soorten gestapeld.
+plot_topn_species_nutr <- function(df_plot, y_label, title_txt, subtitle_txt = NULL) {
+  
+  pal <- get_fixed_palette(df_plot)
+  
+  ggplot(df_plot, aes(x = Location, y = value, fill = species_label)) +
+    geom_col(width = 0.8, colour = "white", linewidth = 0.1) +
+    scale_fill_manual(values = pal, name = "Soort") +
+    #scale_x_continuous(breaks = seq(aer_years_start, max(df_plot$year), by = 2)) +
+    scale_y_continuous(limits = c(0, NA), expand = expansion(mult = c(0, 0.05))) +
+    labs(title = title_txt, subtitle = subtitle_txt, x = "Jaar", y = y_label) +
+    theme_bw() +
+    theme(
+      axis.text.x     = element_text(angle = 45, hjust = 1),
+      legend.position = "right",
+      legend.text     = element_text(size = 8),
+      legend.key.size = unit(0.4, "cm")
+    )
+}
 # Zelfde als hierboven, maar als facetted plot (één paneel per soort) —
 # handig wanneer de soorten in een gestapelde balk te veel op elkaar lijken
 # of wanneer je per soort een eigen (vrije) y-as wilt.
@@ -428,6 +520,26 @@ plot_topn_species_faceted <- function(df_plot, y_label, title_txt, subtitle_txt 
       strip.text  = element_text(size = 8, face = "bold")
     )
 }
+plot_topn_species_nutr_req <- function(df_plot, y_label, title_txt, subtitle_txt = NULL,
+                                       scales = "free_y", ncol = NULL) {
+
+  pal <- get_fixed_palette(df_plot)
+
+  ggplot(df_plot, aes(x = year, y = value, fill = species_label)) +
+    geom_col(width = 0.8, colour = "white", linewidth = 0.1) +
+    scale_fill_manual(values = pal, name = "Soort", guide = "none") +
+    scale_x_continuous(breaks = seq(aer_years_start, max(df_plot$year), by = 4)) +
+    scale_y_continuous(limits = c(0, NA), expand = expansion(mult = c(0, 0.05))) +
+    labs(title = title_txt, subtitle = subtitle_txt, x = "Jaar", y = y_label) +
+    facet_wrap(~species_label, scales = scales, ncol = ncol) +
+    theme_bw() +
+    geom_hline(yintercept = 100, linetype = "dotted")+
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1, size = 7),
+      strip.text  = element_text(size = 8, face = "bold")
+    )
+}
+
 
 # ---------------------------------------------------------------------------
 # Gecombineerd 4-panelen overzicht: gewicht en waarde, elk zowel absoluut als
@@ -553,6 +665,9 @@ prepare_topn_species_by_divisie <- function(df, metric_col, top_n = top_n_specie
       soort_label = paste0(soort_naam, " (", species_code, ")"),
       groep       = if_else(is.na(groep), "Overige soorten", groep)
     )
+  
+
+
 
   species_totals <- df |>
     group_by(species_code, soort_label, groep) |>
@@ -622,6 +737,281 @@ combi_4divisie <- function(df, metric_col, y_label, titel, top_n = top_n_species
 }
 ```
 
+```{r helpers-topn3}
+# combi grafiek levend gewicht en prijs per levend gewicht
+
+if (!require("pacman")) {
+  install.packages("pacman")
+}
+
+# Load all required packages
+pacman::p_load(
+  tidyverse,
+  sf,
+  rnaturalearth,
+  countrycode,
+  patchwork,
+  scales,
+  fishstat,
+  tidytext,
+  ggrepel
+)
+prepare_species_nutrient<-function(df) {
+  df <-df |>  
+  left_join(nutr_fish,by="species_code") |> 
+  mutate(prot_t=live_weight_t*yield/100*protein/100,
+         omega_t=live_weight_t*yield/100*omega/100)
+} 
+
+
+prepare_species_quadrant <- function(df,
+                                     year_min = 2019,
+                                     production_col = "live_weight_t",
+                                     value_col = "value_euro",
+                                     top_n = 50,
+                                     top_90=TRUE,
+                                     metric_col = "value",
+                                     soort_lookup,
+                                     groep_volgorde) {
+  
+  # Aggregate years and species
+  df <- df |>
+    filter(year > year_min) |>
+    group_by(species_code, species_name) |>
+    summarise(
+      production = mean(.data[[production_col]], na.rm = TRUE),
+      value = mean(.data[[value_col]], na.rm = TRUE),
+      .groups = "drop"
+    )
+  
+  # Calculate value per tonne
+  df <- df |>
+    group_by(species_code, species_name) |>
+    summarise(
+      value = sum(value, na.rm = TRUE),
+      production = sum(production, na.rm = TRUE),
+      .groups = "drop"
+    ) |>
+    mutate(
+      value = value / production
+    )
+ 
+ all_species<-df
+ 
+ df_slice<-df |>
+    slice_max(production, n = top_n)
+
+calc_df <- if (top_90) all_species else df_slice
+
+  # Weighted average price
+  avg_price <- sum(calc_df$value * calc_df$production) /
+             sum(calc_df$production)
+  
+ 
+  
+  # Production threshold for 90%
+prod90 <- calc_df |>
+  arrange(desc(production)) |>
+  mutate(
+    cum_prod = cumsum(production),
+    cum_share = cum_prod / sum(production)
+  ) |>
+  filter(cum_share >= 0.90) |>
+  slice(1) |>
+  pull(production)
+  
+  # Add quadrants
+  df <- df |>
+    mutate(
+      quadrant = case_when(
+        production < prod90 & value > avg_price ~ "Luxury niche",
+        production < prod90 & value <= avg_price ~ "Accessible niche",
+        production >= prod90 & value > avg_price ~ "Luxury commodity",
+        TRUE ~ "Accessible commodity"
+      )
+    )
+  
+  # Keep largest producers
+  df <- df |>
+    slice_max(production, n = top_n)
+  
+  # Add species information
+  df <- df |>
+    left_join(
+      soort_lookup |> select(species_code, soort_nl, groep),
+      by = "species_code"
+    ) |>
+    mutate(
+      soort_naam = coalesce(soort_nl, species_name),
+      soort_label = paste0(soort_naam, " (", species_code, ")"),
+      groep = if_else(is.na(groep), "Overige soorten", groep)
+    )
+  
+  # Select top species for colouring
+  species_totals <- df |>
+    group_by(species_code, soort_label, groep) |>
+    summarise(
+      total = sum(.data[[metric_col]], na.rm = TRUE),
+      .groups = "drop"
+    ) |>
+    arrange(desc(total))
+  
+  top_codes <- species_totals |>
+    slice_max(total, n = top_n, with_ties = FALSE) |>
+    pull(species_code)
+  
+  # Legend order
+  label_volgorde <- df |>
+    left_join(
+      soort_lookup |> select(species_code, volgorde),
+      by = "species_code"
+    ) |>
+    mutate(
+      groep = factor(groep, levels = groep_volgorde),
+      volgorde = if_else(is.na(volgorde), 99, volgorde)
+    ) |>
+    arrange(groep, volgorde) |>
+    pull(soort_label)
+  
+  # Final plotting dataset
+  df <- df |>
+    mutate(
+      species_code_plot = if_else(
+        species_code %in% top_codes,
+        species_code,
+        "OVERIG"
+      ),
+      species_label = if_else(
+        species_code %in% top_codes,
+        soort_label,
+        "Overig"
+      ),
+      species_label = factor(
+        species_label,
+        levels = c(label_volgorde, "Overig")
+      )
+    )
+  
+  # Return everything needed later
+  list(
+    data = df,
+    avg_price = avg_price,
+    prod90 = prod90,
+    top_codes = top_codes
+  )
+}
+# add colour for OVERIG
+species_colors_plot <- c(
+  species_colors_master,
+  OVERIG = "grey70"
+)
+plot_prijs_vs_prod <- function(df, 
+                                titel = NULL,
+                                x_title="Levend gewicht (t)",
+                                y_title="Waarde (Euro per levend gewicht (t))") {
+  
+  df_plot <- as.data.frame(df$data)
+  avg_price <- df$avg_price
+  prod90 <- df$prod90
+
+  group_icon <- tribble(
+  ~groep, ~icon,
+  "Platvis", "icon/flatfish.png",
+  "Rondvis", "icon/fish.png",
+  "Pelagische vis", "icon/fish.png",
+  "Garnalen", "icon/shrimp.png",
+  "Kreeften", "icon/lobster.png",
+  "Schaaldieren", "icon/mussel.png",
+  "Inktvissen", "icon/squid.png",
+  "Weekdieren", "icon/mussel.png",
+  "Haaien en roggen", "icon/ray.png",
+  "Overige soorten", "icon/fish.png"
+)
+ 
+ 
+  df_plot<-df_plot |> left_join(group_icon)
+
+  
+  ggplot(df_plot, aes(x = production, y = value, colour = species_code_plot)) +
+  ggimage::geom_image(
+      aes(image = icon),
+      size = 0.05
+    ) +
+    scale_colour_manual(
+      values = species_colors_plot,
+      name = "Soort"
+    ) +
+    geom_text_repel(
+      aes(label = soort_naam),
+      size = 3.5,
+      max.overlaps = Inf,
+      box.padding = 0.3,
+      point.padding = 0.2,
+      colour = "black"
+    ) +
+    geom_hline(
+      yintercept = avg_price,
+      linetype = "dashed",
+      colour = "grey50"
+    ) +
+    geom_vline(
+      xintercept = prod90,
+      linetype = "dotted",
+      colour = "grey50"
+    ) +
+    scale_x_log10(
+      labels = comma
+    ) +
+    scale_y_log10(
+      labels = comma
+    ) +
+    labs(
+      x = x_title,
+      y = y_title
+    ) +
+    theme_minimal(base_size = 14) +
+    theme(
+      panel.grid.minor = element_blank(),
+      panel.grid.major = element_blank(),
+      legend.position = "none",
+      axis.line = element_line(colour = "black"),
+      plot.margin = margin(20, 40, 20, 20)
+    ) +
+    annotate(
+      "text",
+      x = min(df_plot$production) * 1.05,
+      y = avg_price,
+      label = "Average price",
+      hjust = 0,
+      vjust = -0.5,
+      colour = "grey40"
+    ) +
+    annotate(
+      "segment",
+      x = prod90,
+      xend = max(df_plot$production),
+      y = max(df_plot$value) * 1.2,
+      yend = max(df_plot$value) * 1.2,
+      arrow = arrow(length = unit(0.25, "cm"))
+    ) +
+    annotate(
+      "segment",
+      x = max(df_plot$production),
+      xend = prod90,
+      y = max(df_plot$value) * 1.2,
+      yend = max(df_plot$value) * 1.2,
+      arrow = arrow(length = unit(0.25, "cm"))
+    ) +
+    annotate(
+      "text",
+      x = sqrt(prod90 * max(df_plot$production)),
+      y = max(df_plot$value) * 1.3,
+      label = "90% of production",
+      fontface = "bold"
+    )
+}
+```
+
 <!-- =========================================================
      DOCUMENT BODY
      ========================================================= -->
@@ -644,6 +1034,7 @@ aer_nl_all |>
     subtitle_txt = paste0("Top ", top_n_species, " soorten + overig")
   )
 ```
+
 
 ## 1.2 Waarde
 
@@ -674,6 +1065,7 @@ aer_nl_ns |>
     title_txt    = "NL vangsten per soort — Noordzee",
     subtitle_txt = paste0("ICES 4.a/4.b/4.c  |  Top ", top_n_species, " soorten + overig")
   )
+
 ```
 
 ## 2.2 Waarde
@@ -780,7 +1172,107 @@ aer_nl_ns_divisie_soort |>
 ```
 
 ---
+## 3.6 Nutrienten per soort
 
+```{r nl-all-prot, fig.cap="Figuur 11. Nederlandse vangsten (eiwit, % of daily req) per soort en jaar, alle gebieden (AER)."}
+mean_topn_protein_aer_merge |> 
+  plot_topn_species_nutr(
+  y_label      = "protein % of daily req",
+  title_txt    = "NL vangsten per soort — alle gebieden",
+  subtitle_txt = paste0("Top ", top_n_species, " soorten + overig")
+)
+
+```
+
+
+```{r nl-ns-prot, fig.cap="Figuur 12. Nederlandse vangsten (eiwit, % of daily req) per soort en jaar, Noordzee-NL."}
+topn_prot_aer_nl |>
+  plot_topn_species(
+    y_label      = "protein % of daily req",
+    title_txt    = "NL vangsten per soort — alle gebieden",
+    subtitle_txt = paste0("Top ", top_n_species, " soorten + overig")
+  )
+```
+
+```{r nl-ns-omega, fig.cap="Figuur 13. Nederlandse vangsten (EPA&DHA % of daily req) per soort en jaar, Noordzee-NL."}
+topn_omega_aer_nl |>
+  plot_topn_species(
+    y_label      = "EPA&DHA % of daily req",
+    title_txt    = "NL vangsten per soort — alle gebieden",
+    subtitle_txt = paste0("Top ", top_n_species, " soorten + overig")
+  )
+```
+
+```{r nl-all-weight-seg, fig.cap="Figuur 14. Nederlandse vangsten (levend gewicht, t) per soort en jaar, alle gebieden (AER)."}
+#compare weight of catch
+aer_nl_ns |> 
+  prepare_topn_species("live_weight_t") |> 
+  mean_5_years() |> 
+  mutate(Location="North sea") |> rbind(
+    aer_nl_all|>
+  prepare_topn_species("live_weight_t") |> 
+  mean_5_years()|> 
+  mutate(Location="All regions")) |>   plot_topn_species_nutr(
+  y_label      = "Live weight (t)",
+  title_txt    = "NL vangsten per soort — alle gebieden",
+  subtitle_txt = paste0("Top ", top_n_species, " soorten + overig")
+)
+
+```
+```{r nl-ns-eco-weight, fig.cap="Figuur 15. Nederlandse vangsten (levend gewicht, t) en Waarde (Euro per tonne) per soort voor de gemiddelde 5 jaar, Noordze-NL."}
+#compare prijs vs productie 
+prepare_species_quadrant(
+  aer_nl_ns,
+  year_min = 2019,
+  top_n = 25,
+  metric_col = "value",
+  soort_lookup = soort_lookup,
+  groep_volgorde = groep_volgorde
+) |> plot_prijs_vs_prod()
+
+
+```
+```{r nl-all-eco-weight, fig.cap="Figuur 16. Nederlandse vangsten (levend gewicht, t) en Waarde (Euro per tonne) per soort voor de gemiddelde 5 jaar, alle regios"}
+#compare prijs vs productie 
+prepare_species_quadrant(
+  aer_nl_all,
+  year_min = 2019,
+  top_n = 25,
+  metric_col = "value",
+  soort_lookup = soort_lookup,
+  groep_volgorde = groep_volgorde
+) |> plot_prijs_vs_prod()
+
+
+```
+
+```{r nl-omg-eco-weight, fig.cap="Figuur 17. Nederlandse vangsten (Omega, t) en Waarde (Euro per tonne omega) per soort voor de gemiddelde 5 jaar, alle regios"}
+prepare_species_nutrient(aer_nl_all) |> prepare_species_quadrant(
+  year_min = 2019,
+  top_n = 25,
+  production_col = "omega_t",
+  value_col = "value_euro",
+  metric_col = "value",
+  top_90=FALSE,
+  soort_lookup = soort_lookup,
+  groep_volgorde = groep_volgorde
+) |> plot_prijs_vs_prod(x_title="Omega-3 (EPA&DHA (t))",
+                        y_title="Waarde (Euro per Omega-3 (EPA&DHA (t))")
+```
+
+```{r nl-prot-eco-weight, fig.cap="Figuur 18. Nederlandse vangsten (Eiwit, t) en Waarde (Euro per tonne eiwit) per soort voor de gemiddelde 5 jaar, alle regios"}
+prepare_species_nutrient(aer_nl_all) |> prepare_species_quadrant(
+  year_min = 2019,
+  top_n = 25,
+  production_col = "prot_t",
+  value_col = "value_euro",
+  metric_col = "value",
+  top_90=FALSE,
+  soort_lookup = soort_lookup,
+  groep_volgorde = groep_volgorde
+) |> plot_prijs_vs_prod(x_title="Eiwit (t)",
+                        y_title="Waarde (Euro per Eiwit (t))")
+```
 # Session information
 
 ```{r session-info}
