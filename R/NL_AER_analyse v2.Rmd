@@ -42,6 +42,9 @@ library(ggimage)      # percent_format() voor de percentage-panelen
 aer_file <- "C:/Users/MartinPastoors/Martin Pastoors/WKC - Voedseluitzee/Data/STECF_25 07_EU Fleet Economic and Transversal data_fleet segment level.xlsx"
 aer_file_nl <- "C:/Users/MartinPastoors/Martin Pastoors/WKC - Voedseluitzee/Data/aer_nl_all.RData"
 out_dir  <- "C:/Users/MartinPastoors/Martin Pastoors/WKC - Voedseluitzee/resultaten"
+agrimatie_brandstof_file <- "C:/Users/MartinPastoors/Martin Pastoors/WKC - Voedseluitzee/Data/Agrimatie/Agrimatie_brandstofverbruik.xlsx"
+agrimatie_aquacultuur_file <- "C:/Users/MartinPastoors/Martin Pastoors/WKC - Voedseluitzee/Data/Agrimatie/Agrimatie_mosselen_en_oesters.xlsx"
+
 # aer_file <- "C:/Users/riel014/OneDrive - Wageningen University & Research/PhD laptop Backup/Projects/Noordzee/STECF_25-07_AER_data/STECF_25 07_EU Fleet Economic and Transversal data_fleet segment level.xlsx"
 # out_dir  <- "resultaten"
 nutr_file<- "Nutrients_overzicht_sources.xlsx"
@@ -330,6 +333,14 @@ aer_nl_ns_divisie_soort <- aer_landings_nl |>
   )
 
 ```
+
+```{r load-agrimatie}
+
+agrimatie_brandstof <- read_excel(agrimatie_brandstof_file) |> clean_names()
+agrimatie_mosselen_en_oesters <- read_excel(agrimatie_aquacultuur_file) |> clean_names()
+
+```
+
 
 <!-- =========================================================
      HELPER FUNCTIES — top N soorten + "Overig", vaste kleuren, plotten
