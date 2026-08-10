@@ -321,6 +321,11 @@ markttool_soort <- markttool_data |>
 vergelijking <- full_join(aanvoer_soort, markttool_soort, by = c("jaar", "soort_nl")) |>
   mutate(across(c(aanvoer_ton, import_ton, export_ton), ~ replace_na(.x, 0))) |>
   arrange(jaar, desc(import_ton + export_ton + aanvoer_ton))
+
+# vergelijking %>% 
+#   filter(soort_nl=="Blauwe wijting") %>% 
+#   View()
+
 ```
 
 # Aanvoer, import en export per soort
@@ -329,8 +334,10 @@ vergelijking <- full_join(aanvoer_soort, markttool_soort, by = c("jaar", "soort_
 # "Overig / onbekend" (niet-herkende omschrijvingen) telt niet mee bij het
 # bepalen van de top-N soorten, en wordt straks samengevoegd met de
 # restcategorie tot één label.
-top_soorten <- vergelijking |>
+top_soorten <- 
+  vergelijking |>
   filter(soort_nl != "Overig / onbekend") |>
+  filter(jaar %in% range(markttool_data$jaar)) |>
   group_by(soort_nl) |>
   summarise(totaal = sum(aanvoer_ton + import_ton + export_ton), .groups = "drop") |>
   slice_max(totaal, n = top_n_species, with_ties = FALSE) |>
@@ -338,6 +345,7 @@ top_soorten <- vergelijking |>
   pull(soort_nl)
 
 vergelijking_plot <- vergelijking |>
+  filter(jaar %in% range(markttool_data$jaar)) |>
   mutate(soort_plot = if_else(soort_nl %in% top_soorten, soort_nl, "Overig / onbekend")) |>
   group_by(jaar, soort_plot) |>
   summarise(
@@ -357,16 +365,18 @@ vergelijking_plot <- vergelijking |>
 
 ```{r plot-vergelijking, fig.width=10, fig.height=6}
 laatste_jaar <- max(vergelijking_plot$jaar)
+jaren <- range(markttool_data$jaar)
 
 vergelijking_plot |>
-  filter(jaar == laatste_jaar) |>
+  # filter(jaar == laatste_jaar) |>
+  filter(jaar %in% jaren) |>
   ggplot(aes(x = fct_rev(soort_plot), y = ton, fill = stroom)) +
   geom_col(position = "dodge", width = 0.75) +
   coord_flip() +
   scale_y_continuous(labels = label_number(scale = 1e-3, suffix = " kt")) +
   scale_fill_manual(values = c("Aanvoer (AER)" = "#2E7D32", "Import" = "#1565C0", "Export" = "#EF6C00")) +
   labs(
-    title    = paste("Aanvoer, import en export per soort -", laatste_jaar),
+    title    = paste("Aanvoer, import en export per soort -", paste(jaren, collapse="-")),
     subtitle = paste0("Top ", top_n_species, " soorten (naar totale stroom) + overig"),
     x = NULL, y = "Gewicht (duizend ton)", fill = "Stroom"
   ) +
@@ -383,7 +393,8 @@ wordt doorgevoerd/geëxporteerd.
 
 ```{r tabel-vergelijking}
 vergelijking |>
-  filter(jaar == laatste_jaar) |>
+  # filter(jaar == laatste_jaar) |>
+  filter(jaar %in% jaren) |>
   mutate(
     netto_handel    = import_ton - export_ton,
     export_dekking   = if_else(aanvoer_ton > 0, export_ton / aanvoer_ton, NA_real_)
@@ -426,7 +437,7 @@ beschikbaarheid <- vergelijking |>
   )
 
 # Jaren die in dit overzicht getoond worden
-weergave_jaren <- 2022:2024
+weergave_jaren <- sort(unique(markttool_data$jaar))
 
 beschikbaarheid_plot <- beschikbaarheid |>
   filter(jaar %in% weergave_jaren) |>

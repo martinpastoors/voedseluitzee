@@ -204,6 +204,13 @@ markttool_data <- markttool_data |>
   relocate(jaar, type, eenheid, soort, bestand, .before = product_level_1)
 
 glimpse(markttool_data)
+
+# markttool_data %>% 
+#   filter(grepl("whiting", beschrijving)) %>% 
+#   distinct(soort, type, beschrijving) %>% 
+#   View()
+
+
 ```
 
 ```{r check-eenheid, include=FALSE}
@@ -273,6 +280,7 @@ top10_export <- markttool_data |>
   select(jaar, product_level_3, waarde, pct_grand_total)
 
 top10_export
+
 ```
 
 # Top 10 import producten
