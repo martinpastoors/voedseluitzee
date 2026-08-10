@@ -187,6 +187,9 @@ markttool_soort_lookup <- tribble(
   "pollack",            NA, "Koolvis",
   "saithe",             NA, "Koolvis",
   "coley",              NA, "Koolvis",
+  "coalfish",           "POK", "Zwarte koolvis",
+  "pollachius virens",  "POK", "Zwarte koolvis",
+  "redfish",            "RED", "Roodbaars",
   "atlantic salmon",    NA, "Zalm",
   "pacific salmon",     NA, "Zalm",
   "salmon",             NA, "Zalm",
@@ -198,7 +201,10 @@ markttool_soort_lookup <- tribble(
   "tilapia",            NA, "Tilapia",
   "anchov",             NA, "Ansjovis",
   "mussel",             NA, "Mossel",
-  "oyster",             NA, "Oester"
+  "oyster",             NA, "Oester",
+  "scallop",            "SCE", "St. Jacobsschelp",
+  "octopus",            "OCC", "Octopus",
+  "eels",               "ELE", "Aal"
 )
 
 # Verwijdert tekst binnen "(excl. ...)": soorten die daar genoemd worden zijn
@@ -516,6 +522,112 @@ beschikbaarheid |>
   )
 ```
 
+# QC: soortherkenning traceren en prioriteren
+
+Twee hulpmiddelen om te zien wat de trefwoordenlijst wel en niet herkent, en
+waar het toevoegen van een nieuw trefwoord het meeste oplevert.
+
+```{r qc-trace-functie, include=FALSE}
+# Laat voor 1 omschrijving zien welke regel in markttool_soort_lookup 'm
+# raakt (of geen enkele). Handig om een enkel geval te doorgronden.
+trace_soort_match <- function(beschrijving) {
+  tekst_zoeken <- strip_excl(beschrijving)
+
+  for (i in seq_len(nrow(markttool_soort_lookup))) {
+    patroon <- markttool_soort_lookup$patroon[i]
+    if (str_detect(tekst_zoeken, fixed(patroon))) {
+      return(tibble(
+        beschrijving   = beschrijving,
+        gestripte_tekst = tekst_zoeken,
+        rijnummer      = i,
+        patroon        = patroon,
+        species_code   = markttool_soort_lookup$species_code[i],
+        soort_nl_extra = markttool_soort_lookup$soort_nl_extra[i]
+      ))
+    }
+  }
+
+  tibble(
+    beschrijving    = beschrijving,
+    gestripte_tekst = tekst_zoeken,
+    rijnummer       = NA_integer_,
+    patroon         = NA_character_,
+    species_code    = NA_character_,
+    soort_nl_extra  = NA_character_
+  )
+}
+```
+
+## Eén omschrijving tracen
+
+```{r qc-trace-voorbeeld}
+# Pas deze regel aan naar de omschrijving die je wilt uitpluizen
+trace_soort_match(markttool_data$beschrijving[1]) |>
+  knitr::kable(col.names = c("Beschrijving", "Na strip_excl()", "Rij in lookup",
+                              "Patroon dat matchte", "Species code", "Naam (extra)"))
+# Pas deze regel aan naar de omschrijving die je wilt uitpluizen
+trace_soort_match("coalfish") |>
+  knitr::kable(col.names = c("Beschrijving", "Na strip_excl()", "Rij in lookup",
+                              "Patroon dat matchte", "Species code", "Naam (extra)"))
+# Pas deze regel aan naar de omschrijving die je wilt uitpluizen
+trace_soort_match("redfish") |>
+  knitr::kable(col.names = c("Beschrijving", "Na strip_excl()", "Rij in lookup",
+                              "Patroon dat matchte", "Species code", "Naam (extra)"))
+
+# trace_soort_match("blue whiting") |> View()
+# trace_soort_match("coalfish") |> View()
+# markttool_data %>% filter(grepl("blue whiting", tolower(beschrijving))) %>% dplyr::select(beschrijving) %>% distinct() %>%  View()
+
+```
+
+## Grootste posten in "Overig / onbekend"
+
+Niet-herkende omschrijvingen, opgeteld en gesorteerd op gewicht (WFE-ton) —
+dit zijn de kandidaten die het meeste opleveren als je er een trefwoord voor
+toevoegt.
+
+```{r qc-overig-diagnose}
+overig_diagnose <- markttool_data |>
+  filter(soort_nl == "Overig / onbekend") |>
+  group_by(beschrijving) |>
+  summarise(
+    totaal_ton = sum(waarde, na.rm = TRUE) / 1000,
+    n_regels   = n(),
+    .groups = "drop"
+  ) |>
+  arrange(desc(totaal_ton)) |>
+  slice_head(n = 30)
+
+overig_diagnose |>
+  mutate(totaal_ton = round(totaal_ton, 0)) |>
+  knitr::kable(
+    col.names = c("Beschrijving", "Totaal gewicht (t, WFE)", "Aantal productregels"),
+    format.args = list(big.mark = ".", decimal.mark = ",")
+  )
+```
+
+## Dekking per herkende soort
+
+Ter controle: hoeveel gewicht en hoeveel productregels elke herkende soort
+op dit moment vertegenwoordigt.
+
+```{r qc-soort-dekking}
+markttool_data |>
+  filter(soort_nl != "Overig / onbekend") |>
+  group_by(soort_nl) |>
+  summarise(
+    totaal_ton = sum(waarde, na.rm = TRUE) / 1000,
+    n_regels   = n(),
+    .groups = "drop"
+  ) |>
+  arrange(desc(totaal_ton)) |>
+  mutate(totaal_ton = round(totaal_ton, 0)) |>
+  knitr::kable(
+    col.names = c("Soort", "Totaal gewicht (t, WFE)", "Aantal productregels"),
+    format.args = list(big.mark = ".", decimal.mark = ",")
+  )
+```
+
 # QC: inktvissen en zeekatten per jaar
 
 Overzicht van alle beschikbare gegevens voor pijlinktvis, zeekat, vliegende
@@ -612,5 +724,9 @@ if (nrow(inktvis_gemist) == 0) {
   dezelfde opzet gebruikt worden om aanvoerwaarde, importwaarde en
   exportwaarde te vergelijken in plaats van alleen gewicht.
 - Soorten in "Overig / onbekend" (geen trefwoord herkend) of zonder AER-code
-  kun je opzoeken door `markttool_data |> filter(soort_nl == "Overig / onbekend") |> count(beschrijving, sort = TRUE)`
-  te draaien, en vervolgens `markttool_soort_lookup` aan te vullen.
+  kun je opzoeken in de tabel "Grootste posten in Overig / onbekend"
+  hierboven (gesorteerd op gewicht, dus met de belangrijkste kandidaten
+  bovenaan), en vervolgens `markttool_soort_lookup` aanvullen. Gebruik
+  `trace_soort_match("...")` om te checken welke regel een specifieke
+  omschrijving raakt — of waarom hij niets raakt.
+
