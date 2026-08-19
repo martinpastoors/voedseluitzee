@@ -32,6 +32,8 @@ library(janitor)
 library(patchwork)   # combineert panelen + gedeelde legenda
 library(scales) 
 library(ggimage)      # percent_format() voor de percentage-panelen
+library(forcats)
+library(ggh4x)
 ```
 
 <!-- =========================================================
@@ -39,14 +41,20 @@ library(ggimage)      # percent_format() voor de percentage-panelen
      ========================================================= -->
 
 ```{r settings}
-aer_file <- "C:/Users/MartinPastoors/Martin Pastoors/WKC - Voedseluitzee/Data/STECF_25 07_EU Fleet Economic and Transversal data_fleet segment level.xlsx"
-aer_file_nl <- "C:/Users/MartinPastoors/Martin Pastoors/WKC - Voedseluitzee/Data/aer_nl_all.RData"
-out_dir  <- "C:/Users/MartinPastoors/Martin Pastoors/WKC - Voedseluitzee/resultaten"
-agrimatie_brandstof_file <- "C:/Users/MartinPastoors/Martin Pastoors/WKC - Voedseluitzee/Data/Agrimatie/Agrimatie_brandstofverbruik.xlsx"
-agrimatie_aquacultuur_file <- "C:/Users/MartinPastoors/Martin Pastoors/WKC - Voedseluitzee/Data/Agrimatie/Agrimatie_mosselen_en_oesters.xlsx"
 
-# aer_file <- "C:/Users/riel014/OneDrive - Wageningen University & Research/PhD laptop Backup/Projects/Noordzee/STECF_25-07_AER_data/STECF_25 07_EU Fleet Economic and Transversal data_fleet segment level.xlsx"
-# out_dir  <- "resultaten"
+#aer_file <- "C:/Users/MartinPastoors/Martin Pastoors/WKC - Voedseluitzee/Data/STECF_25 07_EU Fleet Economic and Transversal data_fleet segment level.xlsx"
+#aer_file_nl <- "C:/Users/MartinPastoors/Martin Pastoors/WKC - Voedseluitzee/Data/aer_nl_all.RData"
+#out_dir  <- "C:/Users/MartinPastoors/Martin Pastoors/WKC - Voedseluitzee/resultaten"
+#agrimatie_brandstof_file <- "C:/Users/MartinPastoors/Martin Pastoors/WKC - Voedseluitzee/Data/Agrimatie/Agrimatie_brandstofverbruik.xlsx"
+#agrimatie_aquacultuur_file <- "C:/Users/MartinPastoors/Martin Pastoors/WKC - Voedseluitzee/Data/Agrimatie/Agrimatie_mosselen_en_oesters.xlsx"
+
+aer_file <- "C:/Users/riel014/OneDrive - Wageningen University & Research/PhD laptop Backup/Projects/Noordzee/Data/STECF_25 07_EU Fleet Economic and Transversal data_fleet segment level.xlsx"
+aer_file_nl <- "C:/Users/riel014/OneDrive - Wageningen University & Research/PhD laptop Backup/Projects/Noordzee/Data/aer_nl_all.RData"
+out_dir  <- "C:/Users/MartinPastoors/Martin Pastoors/WKC - Voedseluitzee/resultaten"
+agrimatie_brandstof_file <- "C:/Users/riel014/OneDrive - Wageningen University & Research/PhD laptop Backup/Projects/Noordzee/Data/Agrimatie/Agrimatie_brandstofverbruik.xlsx"
+agrimatie_aquacultuur_file <- "C:/Users/riel014/OneDrive - Wageningen University & Research/PhD laptop Backup/Projects/Noordzee/Data/Agrimatie/Agrimatie_mosselen_en_oesters.xlsx"
+aer_file <- "C:/Users/riel014/OneDrive - Wageningen University & Research/PhD laptop Backup/Projects/Noordzee/STECF_25-07_AER_data/STECF_25 07_EU Fleet Economic and Transversal data_fleet segment level.xlsx"
+out_dir  <- "resultaten"
 nutr_file<- "Nutrients_overzicht_sources.xlsx"
 
 if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
@@ -242,8 +250,9 @@ species_colors_df |>
 # )
 
 nutr_fish <- read_excel(nutr_file, sheet = "Sheet2") |> clean_names()
-
-
+nutr_fish_aqua <- read_excel(nutr_file, sheet = "Sheet3") |> clean_names()
+nutr_livestock<-read_excel(nutr_file, sheet = "Sheet4") |> clean_names()
+GHG_all<-read_excel(nutr_file, sheet = "Sheet5") |> clean_names()
 
 # Alle Nederlandse (NLD) aanvoer, Noordoost-Atlantisch (FAO-gebied 27)
 # De Noordzee-subset wordt hieronder afgeleid.
@@ -944,91 +953,198 @@ plot_prijs_vs_prod <- function(df,
   "Overige soorten", "icon/fish.png"
 )
  
- 
-  df_plot<-df_plot |> left_join(group_icon)
-
+   df_plot<-df_plot |> left_join(group_icon)
   
   ggplot(df_plot, aes(x = production, y = value, colour = species_code_plot)) +
-  ggimage::geom_image(
-      aes(image = icon),
-      size = 0.05
-    ) +
-    scale_colour_manual(
-      values = species_colors_plot,
-      name = "Soort"
-    ) +
-    geom_text_repel(
-      aes(label = soort_naam),
-      size = 3.5,
-      max.overlaps = Inf,
-      box.padding = 0.3,
-      point.padding = 0.2,
-      colour = "black"
-    ) +
-    geom_hline(
-      yintercept = avg_price,
-      linetype = "dashed",
-      colour = "grey50"
-    ) +
-    geom_vline(
-      xintercept = prod90,
-      linetype = "dotted",
-      colour = "grey50"
-    ) +
-    scale_x_log10(
-      labels = comma
-    ) +
-    scale_y_log10(
-      labels = comma
-    ) +
-    labs(
-      title = titel,
-      x = x_title,
-      y = y_title
-    ) +
+  ggimage::geom_image(  aes(image = icon),  size = 0.05 ) +
+      scale_colour_manual( values = species_colors_plot, name = "Soort") +
+    geom_text_repel( aes(label = soort_naam),  size = 3.5,  max.overlaps = Inf, box.padding = 0.3, point.padding = 0.2, colour = "black" ) +
+    geom_hline(yintercept = avg_price, linetype = "dashed", colour = "grey50" ) +
+    geom_vline(xintercept = prod90, linetype = "dotted", colour = "grey50") +
+    scale_x_log10(labels = comma) +
+    scale_y_log10(labels = comma ) +
+    labs(title = titel, x = x_title, y = y_title) +
     theme_minimal(base_size = 14) +
     theme(
       panel.grid.minor = element_blank(),
       panel.grid.major = element_blank(),
       legend.position = "none",
       axis.line = element_line(colour = "black"),
-      plot.margin = margin(20, 40, 20, 20)
-    ) +
-    annotate(
-      "text",
-      x = min(df_plot$production) * 1.05,
-      y = avg_price,
-      label = "Average price",
-      hjust = 0,
-      vjust = -0.5,
-      colour = "grey40"
-    ) +
-    annotate(
-      "segment",
-      x = prod90,
-      xend = max(df_plot$production),
-      y = max(df_plot$value) * 1.2,
-      yend = max(df_plot$value) * 1.2,
-      arrow = arrow(length = unit(0.25, "cm"))
-    ) +
-    annotate(
-      "segment",
-      x = max(df_plot$production),
-      xend = prod90,
-      y = max(df_plot$value) * 1.2,
-      yend = max(df_plot$value) * 1.2,
-      arrow = arrow(length = unit(0.25, "cm"))
-    ) +
-    annotate(
-      "text",
-      x = sqrt(prod90 * max(df_plot$production)),
-      y = max(df_plot$value) * 1.3,
-      label = "90% of production",
-      fontface = "bold"
-    )
+      plot.margin = margin(20, 40, 20, 20)) +
+    annotate( "text", x = min(df_plot$production) * 1.05, y = avg_price, label = "Average price",
+      hjust = 0, vjust = -0.5, colour = "grey40") +
+    annotate("segment", x = prod90, xend = max(df_plot$production), y = max(df_plot$value) * 1.2,
+      yend = max(df_plot$value) * 1.2, arrow = arrow(length = unit(0.25, "cm"))) +
+    annotate("segment", x = max(df_plot$production), xend = prod90,
+      y = max(df_plot$value) * 1.2, yend = max(df_plot$value) * 1.2,
+      arrow = arrow(length = unit(0.25, "cm"))) +
+    annotate( "text",  x = sqrt(prod90 * max(df_plot$production)), y = max(df_plot$value) * 1.5,
+      label = "90% of production", fontface = "bold" )
 }
 ```
+```{r helpers-topn4}
+## Nutrient heatmap aquacultuur en visserij
+aqua_heatmap <- aer_nl_all_nutr_ns |>
+  filter(year == 2024) |>
+  group_by(species_code) |>
+  mutate(total_catch = sum(live_weight_t, na.rm = TRUE)) |>
+  ungroup() |>
+  slice_max(order_by = total_catch, n = 15, with_ties = FALSE) |>
+  left_join(soort_lookup, by = "species_code") |>
+  mutate(type = "Visserij") |> 
+  bind_rows(
+    nutr_fish_aqua |> mutate(type = "Aquacultuur"),
+    nutr_livestock |> mutate(type = "Landbouwhuisdieren")) |> 
+  mutate(
+    groep = case_when(
+      species_name_nl == "Paling" ~ "Paling",
+      species_name_nl %in% c("Forel", "Bronforel") ~ "Forel",
+      species_name_nl %in% c("Claresse", "Meerval") ~ "Meerval",
+      species_name_nl == "Steur" ~ "Steur",
+      species_name_nl == "Yellowtail" ~ "Yellowtail",
+      species_name_nl %in% c("Mossel", "Oester") ~ "Schaaldieren",
+      species_name_nl == "Ei" ~ "Ei",
+      species_name_nl %in% c("Varken", "Kip", "Rund") ~ species_name_nl,
+      species_name_nl == "Melk" ~ "Melk",
+      TRUE ~ groep)) 
 
+aqua_heatmap<-aqua_heatmap |> 
+  left_join(GHG_all)
+
+
+plot_nutrient_heatmap <- function(df, 
+                                titel = NULL,
+                                x_f= "species_name_nl",
+                                facet_n=c("type + groep"),
+                                expressed_in_yield="no") {
+
+
+aqua_heatmap_df <- aqua_heatmap |> 
+  mutate(
+    protein = protein / (56 * 0.4) * 100 * ifelse(expressed_in_yield == "yes", yield / 100, 1),
+    omega = omega / 0.45 * 100 * ifelse(expressed_in_yield == "yes", yield / 100, 1),
+    vit_b12 = vit_b12 / 2.4 * 100 * ifelse(expressed_in_yield == "yes", yield / 100, 1)) |>   
+  group_by(species_name_nl, groep, type) |>
+  summarise(across(c(yield, protein, vit_b12, omega,ghg_m), ~ mean(.x, na.rm = TRUE)), .groups = "drop") |>
+  pivot_longer(cols = c(yield, protein, vit_b12, omega, ghg_m), names_to = "nutrient", values_to = "value") |>
+  filter(value > 0) |>
+  mutate(nutrient = factor(nutrient,
+    levels = c("yield", "protein", "vit_b12", "omega","ghg_m"),
+    labels = c("Edible yield", "Protein", "Vitamin B12", "Omega-3 (EPA+DHA)","CO2-eq")))
+
+
+
+# ============================================================
+# DEFINE GROUP ORDER
+# ============================================================
+
+# Aquaculture groups
+aqua_groups <- c(
+  "Eel",
+  "Trout",
+  "Catfish",
+  "Sturgeon",
+  "Marine finfish",
+  "Schaaldieren"
+)
+
+# Fisheries groups
+fish_groups <- c(
+  "Pelagische vis",
+  "Platvis",
+  "Garnalen",
+  "Rondvis",
+  "Schaaldieren",
+  "Inktvissen"
+)
+
+# ============================================================
+# ORDER TYPE + GROUP + SPECIES
+# ============================================================
+
+heatmap_df <- aqua_heatmap_df |>
+ mutate( type = factor(type, levels = c( "Aquacultuur", "Visserij","Landbouwhuisdieren" )),
+    # Create separate ordering for groups
+    group_order = case_when(
+      type == "Aquacultuur" ~ match(groep, aqua_groups),
+      type == "Visserij" ~ match(groep, fish_groups))) |>
+  arrange(type, group_order, species_name_nl) |>
+  mutate(# Species order follows type -> group -> species
+    species_name_nl = factor(species_name_nl, levels = unique(species_name_nl)),
+    # Make group a character so both sets of groups
+    # can be used by facet_nested()
+    groep = as.character(groep))
+
+
+ifelse(facet_n=="groep", heatmap_df<-heatmap_df |> 
+  group_by(type,groep,nutrient) |> 
+  summarise(value=mean(value)),heatmap_df)
+
+
+facet_formula <- as.formula(
+    paste("~", facet_n)
+  )
+ghg_min=0
+ghg_max=15
+  
+
+heatmap_df <- heatmap_df |>
+  mutate(ghg_value=ifelse(nutrient=="CO2-eq",value,NA_real_))
+
+  heatmap_df <- heatmap_df |>
+  mutate(nutrient_y=case_when(
+    nutrient=="Edible yield" ~ 5,
+    nutrient=="Protein" ~ 4,
+    nutrient=="Vitamin B12" ~ 3,
+    nutrient=="Omega-3 (EPA+DHA)" ~ 2,
+    nutrient=="CO2-eq" ~ 0.5
+  ))
+ggplot(heatmap_df,aes(x=.data[[x_f]],y=nutrient_y)) +
+  geom_tile(data=heatmap_df |> filter(nutrient!="CO2-eq"),aes(fill=value),colour="white",linewidth=0.5) +
+  geom_tile(data=heatmap_df |> filter(nutrient=="CO2-eq"),aes(fill=ghg_value),colour="white",linewidth=0.5) +
+  facet_nested(facet_formula,scales="free_x",space="free_x",drop=TRUE,nest_line=element_line(linewidth=0.8)) +
+  scale_y_continuous(
+    breaks=c(5,4,3,2,0.5),
+    labels=c("Edible yield","Protein","Vitamin B12","Omega-3 (EPA+DHA)","CO2-eq")
+  ) +
+  scale_fill_gradientn(
+    colours=c("#edf8b1","#7fcdbb","#2c7fb8","#b2abd2","#8073ac","#4d3b78"),
+    values=scales::rescale(c(0,50,100,150,250,400)),
+    limits=c(0,400),
+    oob=scales::squish,
+    breaks=c(0,50,100,150,250,400),
+    labels=c("0%","50%","100%","150%","250%","400%+"),
+    name="percentage aanbevolen\nnutrienten behoefte",
+    guide=guide_colorbar(order=1)
+  ) +
+  ggnewscale::new_scale_fill() +
+  geom_tile(data=heatmap_df |> filter(nutrient=="CO2-eq"),aes(fill=ghg_value),colour="white",linewidth=0.5) +
+  scale_fill_gradientn(
+    colours=c("#FFF7BC","#FEC44F","#FC8D59","#D7301F","#7F0000"),
+    limits=c(ghg_min,ghg_max),
+    oob=scales::squish,
+    name="CO2-eq",
+    guide=guide_colorbar(order=2)
+  ) +
+  labs(x=NULL,y=NULL,title=NULL) +
+  theme_minimal() +
+  theme(
+    legend.key.width=unit(2.5,"cm"),
+    legend.key.height=unit(0.5,"cm"),
+    panel.grid=element_blank(),
+    axis.text.x=element_text(angle=45,hjust=1,vjust=1,size=9),
+    axis.text.y=element_text(size=10),
+    strip.text.x=element_text(face="bold",size=12),
+    strip.text.x.top=element_text(face="bold",size=9,margin=margin(1,1,1,1)),
+    strip.background=element_rect(fill="grey90",colour="white"),
+    panel.spacing.x=unit(1,"lines"),
+    ggh4x.axis.nestline=element_line(linewidth=0.6),
+    legend.position="bottom",
+    legend.box="vertical"
+  )
+}
+
+```
 <!-- =========================================================
      DOCUMENT BODY
      ========================================================= -->
@@ -1244,8 +1360,16 @@ prepare_species_nutrient(aer_nl_all) |> prepare_species_quadrant(
                         x_title="Eiwit (t)",
                         y_title="Waarde (Euro per Eiwit (t))")
 ```
-# Session information
 
+
+```{r nl-nutr_heatmap, fig.cap="Figuur 19. Nutrienten diversiteit in aquatische producten uit Nederland."}
+aqua_heatmap |> plot_nutrient_heatmap(expressed_in_yield="no")
+```
+
+```{r nl-nutr_heatmap_groep, fig.cap="Figuur 20. Nutrienten diversiteit in aquatische groepen uit Nederland."}
+aqua_heatmap |> plot_nutrient_heatmap(x="groep", facet_n="type",expressed_in_yield="no")
+```
+# Session information
 ```{r session-info}
 sessionInfo()
 ```
