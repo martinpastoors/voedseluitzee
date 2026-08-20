@@ -28,40 +28,55 @@ library(scales)
 
 # Inleiding
 
-Dit document combineert drie databronnen om kweek, aanvoer, import en export per soort
-te vergelijken:
+Dit document combineert vier databronnen om kweek, aanvoer, import en export per soort
+en per land te vergelijken:
 
 - **Kweek**: Agrimatie-data — het gewicht dat Nederlandse mosselkweek (levend gewicht, alle gebieden), ongeacht waar het
   vervolgens verkocht wordt.
 - **Aanvoer**: STECF AER-data — het gewicht dat Nederlandse vissersschepen
   daadwerkelijk aanlanden (levend gewicht, alle gebieden), ongeacht waar het
   vervolgens verkocht wordt.
-- **Import/export**: Visfederatie Markttool — de handelsstromen die de
-  Nederlandse grens over gaan, ongeacht wie de vis heeft gevangen of gekweekt.
+- **Import/export per product**: Visfederatie Markttool ("products"-download) — de
+  handelsstromen die de Nederlandse grens over gaan, ongeacht wie de vis heeft
+  gevangen of gekweekt, uitgesplitst naar productsoort.
+- **Import/export per land**: Visfederatie Markttool ("partners"-download) —
+  dezelfde handelsstromen, maar nu uitgesplitst naar herkomst- resp.
+  bestemmingsland in plaats van naar product.
+
+Zowel de product- als de partnerbestanden worden rechtstreeks vanaf schijf
+ingelezen en samengevoegd; er is geen tussenstap meer nodig die een
+samengevatte `markttool_products.xlsx`/`.rds` wegschrijft en weer inleest.
 
 **Belangrijke kanttekening:**
 
 _ **Soortkoppeling is een heuristiek.** De Markttool levert geen soortcode,
-   alleen een vrije productomschrijving. In de code worden 
+   alleen een vrije productomschrijving. In de code worden
    soortnamen herkend via trefwoorden in die omschrijving en koppelt ze aan dezelfde
    Nederlandse soortnamen als de AER-analyse. Soorten die niet door de
    Nederlandse vloot worden aangevoerd maar wel veel geïmporteerd worden
    (zalm, tonijn, pangasius, tilapia, alaska koolvis, ...) krijgen daardoor
-   terecht een aanvoer van (bijna) nul. Desondanks blijft er een grote categorie 
-   **Overig / onbekend** over die kan bestaan uit verwerkte producten van verschillende 
-   of meerdere soorten. 
+   terecht een aanvoer van (bijna) nul. Desondanks blijft er een grote categorie
+   **Overig / onbekend** over die kan bestaan uit verwerkte producten van verschillende
+   of meerdere soorten.
 
 ```{r settings, include=FALSE}
+# Map met alle Markttool-downloads (zowel "..._products.xlsx" als
+# "..._partners.xlsx" bestanden voor import en export, meerdere jaren)
+markttool_dir <- r"(C:\Users\MartinPastoors\Martin Pastoors\WKC - Voedseluitzee\Data)"
+
 # Voorgesomde AER-aanvoer per jaar/gebied/soort (output van de AER-analyse)
 aer_landings_file <- r"(C:\Users\MartinPastoors\Martin Pastoors\WKC - Voedseluitzee\Data\AER_landings_NL.xlsx)"
-
-# Samengevoegde Markttool import/export-dataset (output van markttool_analyse.Rmd)
-markttool_file <- r"(C:\Users\MartinPastoors\Martin Pastoors\WKC - Voedseluitzee\Data\markttool_data.xlsx)"
 
 agrimatie_aquacultuur_file <- "C:/Users/MartinPastoors/Martin Pastoors/WKC - Voedseluitzee/Data/Agrimatie/Agrimatie_mosselen_en_oesters.xlsx"
 
 # Aantal soorten dat individueel getoond wordt; de rest wordt "Overige soorten"
 top_n_species <- 15
+
+# Aantal landen dat individueel getoond wordt; de rest wordt "Overige landen"
+top_n_landen <- 15
+
+# Aantal (grootste) landen waarvoor het percentage in de figuur getoond wordt
+top_n_labels_landen <- 7
 ```
 
 ```{r soorten-lookup, include=FALSE}
@@ -205,22 +220,6 @@ markttool_soort_lookup <- tribble(
   "eels",               "ELE", "Aal"
 )
 
-# Verwijdert tekst binnen "(excl. ...)": soorten die daar genoemd worden zijn
-# juist UITGESLOTEN van het product (vaak een restcategorie "overige ...
-# vis/schaaldieren, m.u.v. kabeljauw, blauwe wijting, ..."), dus die mogen
-# niet als trefwoord meetellen. De tweede stap vangt een afgekapte clausule
-# op (geen sluithaakje meer, bv. door een tekstlimiet) door alles na "(excl"
-# tot het einde van de tekst te verwijderen. Wordt gebruikt door zowel de
-# classificatie zelf als de QC-diagnose hieronder, zodat ze consistent zijn.
-strip_excl <- function(tekst) {
-  tekst |>
-    str_to_lower() |>
-    str_remove_all("\\(excl[^)]*\\)") |>
-    str_remove("\\(excl.*$")
-}
-
-# Vult species_code + soort_nl per beschrijving. Eerste treffende rij (van
-# boven naar beneden) wint. Geen enkele treffer -> "Overig / onbekend".
 # Sommige AER-soortcodes zijn in de praktijk in de Markttool-omschrijvingen
 # nauwelijks los van elkaar te herkennen (bv. de vier inktvis/zeekat-codes).
 # Die worden daarom in de hoofdvergelijking samengevoegd tot 1 herkenbare
@@ -238,6 +237,22 @@ groepeer_soort <- function(species_code, soort_nl) {
   if_else(!is.na(gegroepeerd), gegroepeerd, soort_nl)
 }
 
+# Verwijdert tekst binnen "(excl. ...)": soorten die daar genoemd worden zijn
+# juist UITGESLOTEN van het product (vaak een restcategorie "overige ...
+# vis/schaaldieren, m.u.v. kabeljauw, blauwe wijting, ..."), dus die mogen
+# niet als trefwoord meetellen. De tweede stap vangt een afgekapte clausule
+# op (geen sluithaakje meer, bv. door een tekstlimiet) door alles na "(excl"
+# tot het einde van de tekst te verwijderen. Wordt gebruikt door zowel de
+# classificatie zelf als de QC-diagnose hieronder, zodat ze consistent zijn.
+strip_excl <- function(tekst) {
+  tekst |>
+    str_to_lower() |>
+    str_remove_all("\\(excl[^)]*\\)") |>
+    str_remove("\\(excl.*$")
+}
+
+# Vult species_code + soort_nl per beschrijving. Eerste treffende rij (van
+# boven naar beneden) wint. Geen enkele treffer -> "Overig / onbekend".
 soort_van_beschrijving <- function(beschrijving) {
   tekst_zoeken <- strip_excl(beschrijving)
 
@@ -266,6 +281,150 @@ soort_van_beschrijving <- function(beschrijving) {
 
   tibble(species_code = species_code, soort_nl = soort_nl)
 }
+
+# Herkent jaar en type (import/export) uit een Markttool-bestandsnaam, ongeacht
+# een eventueel voorvoegsel (bv. een timestamp).
+jaar_en_type_van_bestand <- function(bestandsnaam) {
+  jaar <- str_extract(bestandsnaam, "\\d{4}") |> as.integer()
+  type <- case_when(
+    str_detect(bestandsnaam, regex("import", ignore_case = TRUE)) ~ "import",
+    str_detect(bestandsnaam, regex("export", ignore_case = TRUE)) ~ "export",
+    TRUE ~ NA_character_
+  )
+  if (is.na(jaar) || is.na(type)) {
+    warning(paste("Kon jaar en/of type niet afleiden uit bestandsnaam:", bestandsnaam))
+  }
+  list(jaar = jaar, type = type)
+}
+
+# Rij 1 van een Markttool-bestand bevat de toegepaste filters als vrije
+# tekst, incl. "UnitMVO is ...".
+eenheid_van_bestand <- function(pad, bestandsnaam) {
+  filter_tekst <- read_excel(pad, range = cell_rows(1), col_names = FALSE)[[1]][1]
+  eenheid <- str_extract(filter_tekst, "(?<=UnitMVO is )[^\\n]+")
+  if (is.na(eenheid)) {
+    warning(paste("Kon eenheid (UnitMVO) niet vinden in bestand:", bestandsnaam))
+  }
+  eenheid
+}
+```
+
+```{r read-markttool-products, include=FALSE}
+# De Markttool "products"-export heeft een vaste opbouw:
+# - Rij 1: filterbeschrijving (incl. "UnitMVO is ...")
+# - Rij 2: leeg
+# - Rij 3: kolomkoppen (Product hierarchy - Level 1-4, Sum, Description, % Grand total)
+# - Rij 4 e.v.: data
+
+lees_markttool_product_bestand <- function(pad) {
+  bestandsnaam <- basename(pad)
+  jt      <- jaar_en_type_van_bestand(bestandsnaam)
+  eenheid <- eenheid_van_bestand(pad, bestandsnaam)
+
+  df <- read_excel(
+    pad,
+    skip = 2,
+    col_types = c("text", "text", "text", "text", "numeric", "text", "numeric")
+  )
+
+  df |>
+    rename(
+      product_level_1  = `Product hierarchy - Level 1`,
+      product_level_2  = `Product hierarchy - Level 2`,
+      product_level_3  = `Product hierarchy - Level 3`,
+      product_level_4  = `Product hierarchy - Level 4`,
+      waarde           = `Sum`,
+      beschrijving     = `Description`,
+      pct_grand_total  = `% Grand total`
+    ) |>
+    mutate(
+      jaar    = jt$jaar,
+      type    = jt$type,
+      eenheid = eenheid,
+      bestand = bestandsnaam,
+      .before = 1
+    )
+}
+
+bestanden_producten <- list.files(
+  path = markttool_dir,
+  pattern = "(?i)markttool[ _]\\d{4}[ _](import|export)[ _]products\\.xlsx$",
+  full.names = TRUE
+)
+
+stopifnot(length(bestanden_producten) > 0)
+
+markttool_products <- map_dfr(bestanden_producten, lees_markttool_product_bestand) |>
+  mutate(
+    jaar = as.integer(jaar),
+    type = factor(type, levels = c("import", "export"))
+  ) |>
+  filter(!is.na(waarde))
+
+# Soort afleiden uit de Markttool-beschrijving, consistent met de AER-namen
+markttool_products <- markttool_products |>
+  bind_cols(soort_van_beschrijving(markttool_products$beschrijving))
+
+# Jaren die in dit overzicht getoond worden
+weergave_jaren <- sort(unique(markttool_products$jaar))
+
+# schrijf weg als xlsx
+writexl::write_xlsx(markttool_products, path = file.path(markttool_dir, "markttool_products.xlsx"))
+
+```
+
+```{r read-markttool-partners, include=FALSE}
+# De Markttool "partners"-export heeft dezelfde opbouw als de products-export,
+# maar dan met een landenhiërarchie i.p.v. een producthiërarchie:
+# - Rij 1: filterbeschrijving (incl. "UnitMVO is ...")
+# - Rij 2: leeg
+# - Rij 3: kolomkoppen (Country hierarchy - Level 1-3, Sum, % Grand total)
+# - Rij 4 e.v.: data
+
+lees_markttool_partners_bestand <- function(pad) {
+  bestandsnaam <- basename(pad)
+  jt      <- jaar_en_type_van_bestand(bestandsnaam)
+  eenheid <- eenheid_van_bestand(pad, bestandsnaam)
+
+  df <- read_excel(
+    pad,
+    skip = 2,
+    col_types = c("text", "text", "text", "numeric", "numeric")
+  )
+
+  df |>
+    rename(
+      wereld           = `Country hierarchy - Level 1`,
+      land_groep       = `Country hierarchy - Level 2`,
+      land             = `Country hierarchy - Level 3`,
+      waarde           = `Sum`,
+      pct_grand_total  = `% Grand total`
+    ) |>
+    mutate(
+      jaar    = jt$jaar,
+      type    = jt$type,
+      eenheid = eenheid,
+      bestand = bestandsnaam,
+      .before = 1
+    )
+}
+
+bestanden_partners <- list.files(
+  path = markttool_dir,
+  pattern = "(?i)markttool[ _]\\d{4}[ _](import|export)[ _]partners\\.xlsx$",
+  full.names = TRUE
+)
+
+markttool_partners <- map_dfr(bestanden_partners, lees_markttool_partners_bestand) |>
+  mutate(
+    jaar = as.integer(jaar),
+    type = factor(type, levels = c("import", "export"))
+  ) |>
+  filter(!is.na(waarde), !is.na(land))
+
+# schrijf weg als xlsx
+writexl::write_xlsx(markttool_partners, path = file.path(markttool_dir, "markttool_partners.xlsx"))
+
 ```
 
 ```{r load-aer, include=FALSE}
@@ -284,32 +443,14 @@ aer_nl_all <- aer_landings_nl |>
   )
 ```
 
-
-```{r load-markttool, include=FALSE}
-markttool_data <- read_excel(markttool_file) |>
-  mutate(type = factor(type, levels = c("import", "export")))
-
-# Soort afleiden uit de Markttool-beschrijving, consistent met de AER-namen
-markttool_data <- markttool_data |>
-  bind_cols(soort_van_beschrijving(markttool_data$beschrijving)) |>
-  filter(!is.na(waarde))
-
-# Jaren die in dit overzicht getoond worden
-weergave_jaren <- sort(unique(markttool_data$jaar))
-
-```
-
-
 ```{r load-agrimatie, include=FALSE}
-agrimatie_data <- read_excel(agrimatie_aquacultuur_file) %>%  
-  clean_names() %>% 
-  filter(variabele == "Gewicht") %>% 
-  mutate(soort_nl = "Mossel") %>% 
-  mutate(kweek_ton = waarde * 1000) %>% 
+agrimatie_data <- read_excel(agrimatie_aquacultuur_file) %>%
+  clean_names() %>%
+  filter(variabele == "Gewicht") %>%
+  mutate(soort_nl = "Mossel") %>%
+  mutate(kweek_ton = waarde * 1000) %>%
   dplyr::select(soort_nl, jaar, kweek_ton)
-  
 ```
-
 
 ```{r combineer, include=FALSE}
 # Aanvoer per jaar en soort, in ton
@@ -323,7 +464,7 @@ aanvoer_soort <- aer_nl_all |>
   summarise(aanvoer_ton = sum(live_weight_t, na.rm = TRUE), .groups = "drop")
 
 # Import/export per jaar en soort, in ton (WFE-kg omgerekend naar ton)
-markttool_soort <- markttool_data |>
+markttool_soort <- markttool_products |>
   mutate(
     soort_nl    = groepeer_soort(species_code, soort_nl),
     gewicht_ton = waarde / 1000
@@ -333,30 +474,21 @@ markttool_soort <- markttool_data |>
   pivot_wider(names_from = type, values_from = gewicht_ton, values_fill = 0) |>
   rename(import_ton = import, export_ton = export)
 
-vergelijking <- 
+vergelijking <-
   full_join(agrimatie_data, aanvoer_soort, by = c("jaar", "soort_nl")) |>
   full_join(markttool_soort, by = c("jaar", "soort_nl")) |>
   mutate(across(c(kweek_ton, aanvoer_ton, import_ton, export_ton), ~ replace_na(.x, 0))) |>
   arrange(jaar, desc(kweek_ton + import_ton + export_ton + aanvoer_ton))
-
-# vergelijking <- full_join(aanvoer_soort, markttool_soort, by = c("jaar", "soort_nl")) |>
-#   mutate(across(c(aanvoer_ton, import_ton, export_ton), ~ replace_na(.x, 0))) |>
-#   arrange(jaar, desc(import_ton + export_ton + aanvoer_ton))
-
-# vergelijking %>% 
-#   filter(soort_nl=="Blauwe wijting") %>% 
-#   View()
-
 ```
 
 ```{r vergelijking-top, include=FALSE}
 # "Overig / onbekend" (niet-herkende omschrijvingen) telt niet mee bij het
 # bepalen van de top-N soorten, en wordt straks samengevoegd met de
 # restcategorie tot één label.
-top_soorten <- 
+top_soorten <-
   vergelijking |>
   filter(soort_nl != "Overig / onbekend") |>
-  filter(jaar %in% range(markttool_data$jaar)) |>
+  filter(jaar %in% range(markttool_products$jaar)) |>
   group_by(soort_nl) |>
   summarise(totaal = sum(aanvoer_ton + import_ton + export_ton), .groups = "drop") |>
   slice_max(totaal, n = top_n_species, with_ties = FALSE) |>
@@ -364,7 +496,7 @@ top_soorten <-
   pull(soort_nl)
 
 vergelijking_plot <- vergelijking |>
-  filter(jaar %in% range(markttool_data$jaar)) |>
+  filter(jaar %in% range(markttool_products$jaar)) |>
   mutate(soort_plot = if_else(soort_nl %in% top_soorten, soort_nl, "Overig / onbekend")) |>
   group_by(jaar, soort_plot) |>
   summarise(
@@ -386,21 +518,18 @@ vergelijking_plot <- vergelijking |>
 
 # De totale visstromen in beeld
 
-De aanvoerstromen staan rechts in de figuur en bestaan uit de aanvoer (uit AER), 
-de kweek van mosselen (uit Agrimatie) en de import van verschillende landen. 
+De aanvoerstromen staan rechts in de figuur en bestaan uit de aanvoer (uit AER),
+de kweek van mosselen (uit Agrimatie) en de import van verschillende landen.
 Het percentage is het deel van de totaal beschikbare hoeveelheid die wordt aangevoerd
-door de Nederlandse visserij. 
-De uitvoer bestaat uit de export en staat links in de figuur. 
+door de Nederlandse visserij.
+De uitvoer bestaat uit de export en staat links in de figuur.
 Het verschil tussen wat binnenkomt (aanvoer + kweek + import) en wat weer wordt
-geëxporteerd, is een grove schatting van wat er in Nederland "blijft". 
+geëxporteerd, is een grove schatting van wat er in Nederland "blijft".
 Het is een  mix van **binnenlandse consumptie**, **verwerkings-/snijverlies**
 (bijvoorbeeld filerering, waardoor het WFE-gewicht van het eindproduct lager
 is dan het gewicht dat als grondstof binnenkomt) en niet-geregistreerde
 voorraadmutaties. Het is dus geen zuiver consumptiecijfer, maar een
-massabalans-indicator. 
-
-Het aandeel van de Nederlandse vangst in de totaal beschikbare hoeveelheid vis
-in Nederland is teruggelopen van 18% in 2018 tot 13-14% in 2024. 
+massabalans-indicator.
 
 ```{r beschikbaarheidx, include=FALSE}
 beschikbaarheid <- vergelijking |>
@@ -409,32 +538,7 @@ beschikbaarheid <- vergelijking |>
     beschikbaar_nl       = aanbod_totaal - export_ton,
     aandeel_beschikbaar  = if_else(aanbod_totaal > 0, beschikbaar_nl / aanbod_totaal, NA_real_)
   )
-
-
-beschikbaarheid_plot <- beschikbaarheid |>
-  filter(jaar %in% weergave_jaren) |>
-  mutate(soort_plot = if_else(soort_nl %in% top_soorten, soort_nl, "Overig / onbekend")) |>
-  group_by(jaar, soort_plot) |>
-  summarise(
-    aanbod_totaal = sum(aanbod_totaal),
-    export_ton    = sum(export_ton),
-    .groups = "drop"
-  ) |>
-  mutate(soort_plot = factor(soort_plot, levels = c(top_soorten, "Overig / onbekend")))
-
-beschikbaarheid_plot0 <- beschikbaarheid |>
-  filter(jaar %in% weergave_jaren) |>
-  group_by(jaar) |>
-  summarise(
-    aanvoer_ton = sum(aanvoer_ton),
-    import_ton = sum(import_ton),
-    export_ton    = sum(export_ton),
-    .groups = "drop"
-  ) %>% 
-  mutate(export_ton = -1 * export_ton) 
-
 ```
-
 
 ```{r plot-kweek-aanvoer-import-vs-export, fig.width=9, fig.height=5}
 beschikbaarheid_wide <- beschikbaarheid |>
@@ -499,11 +603,12 @@ ggplot(beschikbaarheid_plot0, aes(x = fct_rev(factor(jaar)), y = ton, fill = str
   theme(legend.position = "top")
 ```
 
+
 \newpage
 
 # De visstromen per jaar en per soort
 
-Dezelfde figuur als hierboven maar nu uitgezet per jaar en per soort. 
+Dezelfde figuur als hierboven maar nu uitgezet per jaar en per soort.
 
 ```{r plot-kweek-aanvoer-import-vs-export-per-soort, fig.width=12, fig.asp=0.6}
 beschikbaarheid_plot <- beschikbaarheid |>
@@ -561,14 +666,12 @@ ggplot(beschikbaarheid_plot, aes(x = fct_rev(soort_plot), y = ton, fill = stroom
 
 # De visstromen per soort en per jaar
 
-Dezelfde figuur als hierboven maar nu uitgezet per soort en per jaar. 
-
-```{r plot-kweek-aanvoer-import-vs-export-per-soort2, fig.width=12, fig.asp=1.2}
+```{r plot-kweek-aanvoer-import-vs-export-per-soort2, fig.width=12, fig.asp=1.1}
 
 beschikbaarheid_plot <- beschikbaarheid |>
   filter(jaar %in% weergave_jaren) |>
   mutate(soort_plot = if_else(soort_nl %in% top_soorten, soort_nl, "Overig / onbekend")) |>
-  mutate(jaar = factor(as.character(jaar))) %>% 
+  mutate(jaar = factor(as.character(jaar))) %>%
   group_by(jaar, soort_plot) |>
   summarise(
     kweek_ton   = sum(kweek_ton),
@@ -634,11 +737,11 @@ beschikbaarheid |>
     import_ton  = sum(import_ton),
     export_ton  = sum(export_ton),
     .groups = "drop"
-  ) %>%  
+  ) %>%
   mutate(
-    aanbod_ton = kweek_ton + aanvoer_ton + import_ton, 
+    aanbod_ton = kweek_ton + aanvoer_ton + import_ton,
     beschikbaar_nl = aanbod_ton - export_ton
-  ) %>% 
+  ) %>%
   arrange(desc(aanbod_ton)) |>
   # slice_head(n = 25) |>
   mutate(
@@ -696,4 +799,115 @@ beschikbaarheid_wide2 |>
     format.args = list(big.mark = ".", decimal.mark = ","),
     align = c("l", rep("r", length(jaar_cols) + 1))
   )
+```
+
+\newpage
+
+# Herkomst van de import en bestemming van de export
+
+```{r landen-top, include=FALSE}
+
+# Kleurenpalet: consistente kleuren voor de top-N landen + grijs voor de rest.
+palet_landen <- function(top_landen) {
+  kleuren <- scales::hue_pal()(length(top_landen))
+  setNames(c(kleuren, "grey70"), c(top_landen, "Overige landen"))
+}
+
+top_landen_import <- markttool_partners |>
+  filter(type == "import", jaar %in% weergave_jaren) |>
+  group_by(land) |>
+  summarise(totaal = sum(waarde), .groups = "drop") |>
+  slice_max(totaal, n = top_n_landen, with_ties = FALSE) |>
+  arrange(desc(totaal)) |>
+  pull(land)
+
+top_landen_export <- markttool_partners |>
+  filter(type == "export", jaar %in% weergave_jaren) |>
+  group_by(land) |>
+  summarise(totaal = sum(waarde), .groups = "drop") |>
+  slice_max(totaal, n = top_n_landen, with_ties = FALSE) |>
+  arrange(desc(totaal)) |>
+  pull(land)
+
+landen_plot_import <- markttool_partners |>
+  filter(type == "import", jaar %in% weergave_jaren) |>
+  mutate(land_plot = if_else(land %in% top_landen_import, land, "Overige landen")) |>
+  group_by(jaar, land_plot) |>
+  summarise(ton = sum(waarde) / 1000, .groups = "drop") |>
+  group_by(jaar) |>
+  mutate(
+    pct = ton / sum(ton),
+    label_tekst = if_else(
+      land_plot %in% head(top_landen_import, top_n_labels_landen),
+      percent(pct, accuracy = 1),
+      NA_character_
+    )
+  ) |>
+  ungroup() |>
+  mutate(land_plot = factor(land_plot, levels = rev(c(top_landen_import, "Overige landen"))))
+
+landen_plot_export <- markttool_partners |>
+  filter(type == "export", jaar %in% weergave_jaren) |>
+  mutate(land_plot = if_else(land %in% top_landen_export, land, "Overige landen")) |>
+  group_by(jaar, land_plot) |>
+  summarise(ton = sum(waarde) / 1000, .groups = "drop") |>
+  group_by(jaar) |>
+  mutate(
+    pct = ton / sum(ton),
+    label_tekst = if_else(
+      land_plot %in% head(top_landen_export, top_n_labels_landen),
+      percent(pct, accuracy = 1),
+      NA_character_
+    )
+  ) |>
+  ungroup() |>
+  mutate(land_plot = factor(land_plot, levels = rev(c(top_landen_export, "Overige landen"))))
+```
+
+## Waar komt de import vandaan?
+
+```{r plot-landen-import, fig.width=10, fig.height=6}
+ggplot(landen_plot_import, aes(x = fct_rev(factor(jaar)), y = ton, fill = land_plot)) +
+  geom_col(position = "stack", width = 0.7) +
+  geom_text(
+    aes(label = label_tekst),
+    position = position_stack(vjust = 0.5),
+    colour = "black", size = 2.8,
+    na.rm = TRUE
+  ) +
+  coord_flip() +
+  scale_y_continuous(labels = label_number(scale = 1e-3, suffix = " kt")) +
+  scale_fill_manual(name = NULL, values = palet_landen(top_landen_import)) +
+  guides(fill = guide_legend(ncol = 1, reverse = TRUE)) +
+  labs(
+    title    = paste0("Herkomst van de import, per jaar (top ", top_n_landen, " landen)"),
+    subtitle = paste0("Percentage getoond voor de top ", top_n_labels_landen, " landen"),
+    x = NULL, y = "Gewicht (duizend ton)"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "right", legend.text = element_text(size = 8))
+```
+
+## Waar gaat de export naartoe?
+
+```{r plot-landen-export, fig.width=10, fig.height=6}
+ggplot(landen_plot_export, aes(x = fct_rev(factor(jaar)), y = ton, fill = land_plot)) +
+  geom_col(position = "stack", width = 0.7) +
+  geom_text(
+    aes(label = label_tekst),
+    position = position_stack(vjust = 0.5),
+    colour = "black", fontface = "bold", size = 2.8,
+    na.rm = TRUE
+  ) +
+  coord_flip() +
+  scale_y_continuous(labels = label_number(scale = 1e-3, suffix = " kt")) +
+  scale_fill_manual(name = NULL, values = palet_landen(top_landen_export)) +
+  guides(fill = guide_legend(ncol = 1, reverse = TRUE)) +
+  labs(
+    title    = paste0("Bestemming van de export, per jaar (top ", top_n_landen, " landen)"),
+    subtitle = paste0("Percentage getoond voor de top ", top_n_labels_landen, " landen"),
+    x = NULL, y = "Gewicht (duizend ton)"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "right", legend.text = element_text(size = 8))
 ```
