@@ -39,19 +39,17 @@ te vergelijken:
 - **Import/export**: Visfederatie Markttool — de handelsstromen die de
   Nederlandse grens over gaan, ongeacht wie de vis heeft gevangen of gekweekt.
 
-**Twee belangrijke kanttekeningen:**
+**Belangrijke kanttekening:**
 
-1. **Alleen gewicht, geen waarde.** De Markttool-download bevat een gewicht in
-   *WFE* (Whole Fish Equivalent, kg) maar geen geldbedrag. AER heeft wel een
-   waarde in euro's, maar om appels met appels te vergelijken gebruiken we
-   hier voor alle drie de stromen het **gewicht** (in ton).
-2. **Soortkoppeling is een heuristiek.** De Markttool levert geen soortcode,
-   alleen een vrije productomschrijving. Onderstaande code herkent
-   soortnamen via trefwoorden in die omschrijving en koppelt ze aan dezelfde
+_ **Soortkoppeling is een heuristiek.** De Markttool levert geen soortcode,
+   alleen een vrije productomschrijving. In de code worden 
+   soortnamen herkend via trefwoorden in die omschrijving en koppelt ze aan dezelfde
    Nederlandse soortnamen als de AER-analyse. Soorten die niet door de
    Nederlandse vloot worden aangevoerd maar wel veel geïmporteerd worden
    (zalm, tonijn, pangasius, tilapia, alaska koolvis, ...) krijgen daardoor
-   terecht een aanvoer van (bijna) nul.
+   terecht een aanvoer van (bijna) nul. Desondanks blijft er een grote categorie 
+   **Overig / onbekend** over die kan bestaan uit verwerkte producten van verschillende 
+   of meerdere soorten. 
 
 ```{r settings, include=FALSE}
 # Voorgesomde AER-aanvoer per jaar/gebied/soort (output van de AER-analyse)
@@ -386,21 +384,23 @@ vergelijking_plot <- vergelijking |>
 
 \newpage
 
-# Wat blijft er in Nederland (aanvoer + kweek + import − export)?
+# De totale visstromen in beeld
 
+De aanvoerstromen staan rechts in de figuur en bestaan uit de aanvoer (uit AER), 
+de kweek van mosselen (uit Agrimatie) en de import van verschillende landen. 
+Het percentage is het deel van de totaal beschikbare hoeveelheid die wordt aangevoerd
+door de Nederlandse visserij. 
+De uitvoer bestaat uit de export en staat links in de figuur. 
 Het verschil tussen wat binnenkomt (aanvoer + kweek + import) en wat weer wordt
-geëxporteerd, is een grove schatting van wat er in Nederland "blijft":
-een mix van **binnenlandse consumptie**, **verwerkings-/snijverlies**
+geëxporteerd, is een grove schatting van wat er in Nederland "blijft". 
+Het is een  mix van **binnenlandse consumptie**, **verwerkings-/snijverlies**
 (bijvoorbeeld filerering, waardoor het WFE-gewicht van het eindproduct lager
 is dan het gewicht dat als grondstof binnenkomt) en niet-geregistreerde
 voorraadmutaties. Het is dus geen zuiver consumptiecijfer, maar een
-massabalans-indicator. Omdat de Markttool-gewichten al in WFE zijn
-uitgedrukt — precies bedoeld om vergelijkbaar te zijn met aanvoercijfers —
-is deze optelling inhoudelijk consistent.
+massabalans-indicator. 
 
-Een negatieve waarde (meer export dan aanbod) kan wijzen op voorraadgebruik
-uit eerdere jaren, op afwijkingen tussen de AER- en Markttool-periodes, of op
-onvolledige soortherkenning in één van beide bronnen.
+Het aandeel van de Nederlandse vangst in de totaal beschikbare hoeveelheid vis
+in Nederland is teruggelopen van 18% in 2018 tot 13-14% in 2024. 
 
 ```{r beschikbaarheidx, include=FALSE}
 beschikbaarheid <- vergelijking |>
@@ -501,7 +501,11 @@ ggplot(beschikbaarheid_plot0, aes(x = fct_rev(factor(jaar)), y = ton, fill = str
 
 \newpage
 
-```{r plot-kweek-aanvoer-import-vs-export-per-soort, fig.width=12, fig.height=7}
+# De visstromen per jaar en per soort
+
+Dezelfde figuur als hierboven maar nu uitgezet per jaar en per soort. 
+
+```{r plot-kweek-aanvoer-import-vs-export-per-soort, fig.width=12, fig.asp=0.6}
 beschikbaarheid_plot <- beschikbaarheid |>
   filter(jaar %in% weergave_jaren) |>
   mutate(soort_plot = if_else(soort_nl %in% top_soorten, soort_nl, "Overig / onbekend")) |>
@@ -532,7 +536,67 @@ ggplot(beschikbaarheid_plot, aes(x = fct_rev(soort_plot), y = ton, fill = stroom
   geom_col(position = "stack", width = 0.75) +
   geom_hline(yintercept = 0, colour = "grey40", linewidth = 0.4) +
   coord_flip() +
-  facet_wrap(~jaar, ncol = 3) +
+  facet_wrap(~jaar, ncol = 4) +
+  scale_y_continuous(labels = function(x) label_number(scale = 1e-3, suffix = " kt")(abs(x))) +
+  scale_fill_manual(
+    name = NULL,
+    values = c(
+      "Aanvoer (AER)"     = "#90CAF9",
+      "Kweek (Agrimatie)" = "#37474F",
+      "Import"            = "#1565C0",
+      "Export"            = "#EF6C00"
+    ),
+    breaks = c("Export", "Aanvoer (AER)", "Kweek (Agrimatie)", "Import")
+  ) +
+  labs(
+    title    = "Aanvoer + kweek + import versus export per soort, 2022-2024",
+    subtitle = "Aanvoer, kweek en import naar rechts, export naar links.",
+    x = NULL, y = "Gewicht (duizend ton)"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "top")
+```
+
+\newpage
+
+# De visstromen per soort en per jaar
+
+Dezelfde figuur als hierboven maar nu uitgezet per soort en per jaar. 
+
+```{r plot-kweek-aanvoer-import-vs-export-per-soort2, fig.width=12, fig.asp=1.2}
+
+beschikbaarheid_plot <- beschikbaarheid |>
+  filter(jaar %in% weergave_jaren) |>
+  mutate(soort_plot = if_else(soort_nl %in% top_soorten, soort_nl, "Overig / onbekend")) |>
+  mutate(jaar = factor(as.character(jaar))) %>% 
+  group_by(jaar, soort_plot) |>
+  summarise(
+    kweek_ton   = sum(kweek_ton),
+    aanvoer_ton = sum(aanvoer_ton),
+    import_ton  = sum(import_ton),
+    export_ton  = sum(export_ton),
+    .groups = "drop"
+  ) |>
+  mutate(export_ton = -1 * export_ton) |>
+  pivot_longer(
+    cols = c(kweek_ton, aanvoer_ton, import_ton, export_ton),
+    names_to = "stroom", values_to = "ton"
+  ) |>
+  mutate(
+    stroom     = recode(stroom,
+                         aanvoer_ton = "Aanvoer (AER)",
+                         kweek_ton   = "Kweek (Agrimatie)",
+                         import_ton  = "Import",
+                         export_ton  = "Export"),
+    stroom     = factor(stroom, levels = c("Export", "Import", "Kweek (Agrimatie)", "Aanvoer (AER)")),
+    soort_plot = factor(soort_plot, levels = c(top_soorten, "Overig / onbekend"))
+  )
+
+ggplot(beschikbaarheid_plot, aes(x = fct_rev(jaar), y = ton, fill = stroom)) +
+  geom_col(position = "stack", width = 0.75) +
+  geom_hline(yintercept = 0, colour = "grey40", linewidth = 0.4) +
+  coord_flip() +
+  facet_wrap(~soort_plot, ncol = 4) +
   scale_y_continuous(labels = function(x) label_number(scale = 1e-3, suffix = " kt")(abs(x))) +
   scale_fill_manual(
     name = NULL,
@@ -554,10 +618,9 @@ ggplot(beschikbaarheid_plot, aes(x = fct_rev(soort_plot), y = ton, fill = stroom
 ```
 
 
-
 \newpage
 
-## Tabel: wat blijft er in Nederland, per soort (2020-2024)
+## Tabel: wat komt er binnen, wordt aangevoerd of gekweekt, wat gaat er uit en wat blijft er in Nederland, per soort (totaal voor 2018-2024)
 
 ```{r tabel-beschikbaarheid}
 beschikbaarheid |>
@@ -590,3 +653,47 @@ beschikbaarheid |>
   )
 ```
 
+\newpage
+
+## Tabel: Wat blijft er in Nederland, per jaar en per soort
+
+```{r tabel-beschikbaarheid2}
+jaar_cols <- as.character(sort(weergave_jaren))
+
+beschikbaarheid_wide2 <- beschikbaarheid |>
+  filter(jaar %in% weergave_jaren) |>
+  mutate(soort_plot = if_else(soort_nl %in% top_soorten, soort_nl, "Overig / onbekend")) |>
+  group_by(soort_plot, jaar) |>
+  summarise(
+    kweek_ton   = sum(kweek_ton),
+    aanvoer_ton = sum(aanvoer_ton),
+    import_ton  = sum(import_ton),
+    export_ton  = sum(export_ton),
+    .groups = "drop"
+  ) |>
+  mutate(
+    aanbod_ton     = kweek_ton + aanvoer_ton + import_ton,
+    beschikbaar_nl = aanbod_ton - export_ton
+  ) |>
+  group_by(soort_plot, jaar) |>
+  summarise(beschikbaar_nl = sum(beschikbaar_nl), .groups = "drop") |>
+  mutate(jaar = as.character(jaar)) |>
+  pivot_wider(names_from = jaar, values_from = beschikbaar_nl, values_fill = 0) |>
+  select(soort_plot, all_of(jaar_cols)) |>
+  mutate(Totaal = rowSums(across(all_of(jaar_cols)), na.rm = TRUE)) |>
+  arrange(desc(Totaal))
+
+totaalrij <- beschikbaarheid_wide2 |>
+  summarise(across(all_of(c(jaar_cols, "Totaal")), \(x) sum(x, na.rm = TRUE))) |>
+  mutate(soort_plot = "Totaal")
+
+beschikbaarheid_wide2 <- bind_rows(beschikbaarheid_wide2, totaalrij) |>
+  mutate(across(all_of(c(jaar_cols, "Totaal")), ~ round(.x, 0)))
+
+beschikbaarheid_wide2 |>
+  knitr::kable(
+    col.names = c("Soort", jaar_cols, "Totaal"),
+    format.args = list(big.mark = ".", decimal.mark = ","),
+    align = c("l", rep("r", length(jaar_cols) + 1))
+  )
+```
