@@ -55,7 +55,7 @@ agrimatie_brandstof_file <- "C:/Users/riel014/OneDrive - Wageningen University &
 agrimatie_aquacultuur_file <- "C:/Users/riel014/OneDrive - Wageningen University & Research/PhD laptop Backup/Projects/Noordzee/Data/Agrimatie/Agrimatie_mosselen_en_oesters.xlsx"
 aer_file <- "C:/Users/riel014/OneDrive - Wageningen University & Research/PhD laptop Backup/Projects/Noordzee/STECF_25-07_AER_data/STECF_25 07_EU Fleet Economic and Transversal data_fleet segment level.xlsx"
 out_dir  <- "resultaten"
-nutr_file<- "Nutrients_overzicht_sources.xlsx"
+nutr_file<- "Nutrients/data_nutr_ghg.xlsx"
 
 if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
 
@@ -249,10 +249,9 @@ species_colors_df |>
 #   read_excel(aer_file, sheet = "FS_landings FAO 2018-2023") |> clean_names()
 # )
 
-nutr_fish <- read_excel(nutr_file, sheet = "Sheet2") |> clean_names()
-nutr_fish_aqua <- read_excel(nutr_file, sheet = "Sheet3") |> clean_names()
-nutr_livestock<-read_excel(nutr_file, sheet = "Sheet4") |> clean_names()
-GHG_all<-read_excel(nutr_file, sheet = "Sheet5") |> clean_names()
+nutr_all <- read_excel(nutr_file, sheet = "data_r") |> clean_names()
+GHG_all<-read_excel(nutr_file, sheet = "ghg_r") |> clean_names()
+nutr_req_hum<-read_excel(nutr_file, sheet = "requirment_r") |> clean_names()
 
 # Alle Nederlandse (NLD) aanvoer, Noordoost-Atlantisch (FAO-gebied 27)
 # De Noordzee-subset wordt hieronder afgeleid.
@@ -413,10 +412,14 @@ topn_value <- aer_nl_all |>
     # Nutrienten en edible yield 
     # Gemiddelde laatste 5 jaar voor plots 
 
+
 aer_nl_all_nutr<-aer_nl_all |> 
-  left_join(nutr_fish,by="species_code") |> 
-  mutate(prot_t=live_weight_t*1e6*yield/100*protein/100/365/17.2e6,
-         omega_t=live_weight_t*1e6*yield/100*omega/100/365/17.2e6)
+  left_join(soort_lookup |> select(species_code, soort_nl, groep), by = "species_code") |>
+  rename("species_name_nl"=soort_nl) |> 
+  left_join(nutr_all,by="species_name_nl",keep=FALSE) |>
+  filter(!is.na(species_name_nl)) |> 
+  mutate(prot_t=live_weight_t*1e6*yield/100*protein_g/100/365/17.2e6,
+         omega_t=live_weight_t*1e6*yield/100*omega_3_fatty_acids_g/100/365/17.2e6)
 
 topn_prot_aer_nl <-aer_nl_all_nutr |>
   prepare_topn_species("prot_t") 
@@ -433,10 +436,12 @@ topn_omega_aer_nl<-topn_omega_aer_nl |>
 
 
 aer_nl_all_nutr_ns<-aer_nl_ns |> 
-  left_join(nutr_fish,by="species_code") |> 
-  mutate(prot_t=live_weight_t*1e6*yield/100*protein/100/365/17.2e6,
-         omega_t=live_weight_t*1e6*yield/100*omega/100/365/17.2e6) 
-  
+  left_join(soort_lookup |> select(species_code, soort_nl, groep), by = "species_code") |>
+  rename("species_name_nl"=soort_nl) |> 
+  left_join(nutr_all,by="species_name_nl",keep=FALSE) |>
+  filter(!is.na(species_name_nl)) |> 
+  mutate(prot_t=live_weight_t*1e6*yield/100*protein_g/100/365/17.2e6,
+         omega_t=live_weight_t*1e6*yield/100*omega_3_fatty_acids_g/100/365/17.2e6)
   
 topn_prot_aer_nl_ns <-aer_nl_all_nutr_ns |>
   prepare_topn_species("prot_t") |> 
@@ -783,9 +788,11 @@ pacman::p_load(
 )
 prepare_species_nutrient<-function(df) {
   df <-df |>  
-  left_join(nutr_fish,by="species_code") |> 
-  mutate(prot_t=live_weight_t*yield/100*protein/100,
-         omega_t=live_weight_t*yield/100*omega/100)
+  left_join(soort_lookup |> select(species_code, soort_nl, groep), by = "species_code") |>
+  rename("species_name_nl"=soort_nl) |> 
+  left_join(nutr_all,by="species_name_nl",keep=FALSE) |>
+  mutate(prot_t=live_weight_t*yield/100*protein_g/100,
+         omega_t=live_weight_t*yield/100*omega_3_fatty_acids_g/100)
 } 
 
 
@@ -984,165 +991,316 @@ plot_prijs_vs_prod <- function(df,
 ```
 ```{r helpers-topn4}
 ## Nutrient heatmap aquacultuur en visserij
-aqua_heatmap <- aer_nl_all_nutr_ns |>
+aqua_heatmap <- aer_nl_ns |>
   filter(year == 2024) |>
   group_by(species_code) |>
   mutate(total_catch = sum(live_weight_t, na.rm = TRUE)) |>
   ungroup() |>
   slice_max(order_by = total_catch, n = 15, with_ties = FALSE) |>
-  left_join(soort_lookup, by = "species_code") |>
-  mutate(type = "Visserij") |> 
-  bind_rows(
-    nutr_fish_aqua |> mutate(type = "Aquacultuur"),
-    nutr_livestock |> mutate(type = "Landbouwhuisdieren")) |> 
-  mutate(
-    groep = case_when(
-      species_name_nl == "Paling" ~ "Paling",
-      species_name_nl %in% c("Forel", "Bronforel") ~ "Forel",
-      species_name_nl %in% c("Claresse", "Meerval") ~ "Meerval",
-      species_name_nl == "Steur" ~ "Steur",
-      species_name_nl == "Yellowtail" ~ "Yellowtail",
-      species_name_nl %in% c("Mossel", "Oester") ~ "Schaaldieren",
-      species_name_nl == "Ei" ~ "Ei",
-      species_name_nl %in% c("Varken", "Kip", "Rund") ~ species_name_nl,
-      species_name_nl == "Melk" ~ "Melk",
-      TRUE ~ groep)) 
+  left_join(soort_lookup |> select(species_code, soort_nl, groep), by = c("species_code") )|>
+  rename("species_name_nl"=soort_nl) |> 
+  left_join(nutr_all,by=c("species_name_nl","groep"))
+
+aqua_heatmap <- aqua_heatmap |> bind_rows( nutr_all |> filter(productie != "Visserij") )
 
 aqua_heatmap<-aqua_heatmap |> 
   left_join(GHG_all)
 
 
-plot_nutrient_heatmap <- function(df, 
-                                titel = NULL,
-                                x_f= "species_name_nl",
-                                facet_n=c("type + groep"),
-                                expressed_in_yield="no") {
+plot_nutrient_heatmap <- function(
+  df,
+  titel = NULL,
+  x_f = "species_name_nl",
+  facet_n = "productie + groep",
+  expressed_in_yield = "no"
+) {
 
+  # Prepare nutrient data
+  heatmap_df <- aqua_heatmap |>
+    mutate(
+      potassium_g = potassium_g / 1e3
+    ) |>
+    pivot_longer(
+      cols = yield:sodium_mg,
+      names_to = "nutrient_n",
+      values_to = "value"
+    ) |>
+    left_join(nutr_req_hum, by = "nutrient_n") |>
+    filter(
+      !is.na(requirement),
+      value > 0,
+      nutrient_n %in% c(
+        "yield", "protein_g", "vitamin_b12_ug",
+        "omega_3_fatty_acids_g", "calcium_mg",
+        "iodine_ug", "iron_mg", "zinc_mg", "vitamin_a_ug"
+      )
+    ) |>
+    mutate(
+      score = value / as.numeric(requirement) * 100,
+      nutrient_n = recode(
+        nutrient_n,
+        yield = "Edible yield",
+        protein_g = "Protein",
+        vitamin_b12_ug = "Vitamin B12",
+        omega_3_fatty_acids_g = "Omega-3 (EPA+DHA)",
+        calcium_mg = "Calcium",
+        iodine_ug = "Iodine",
+        iron_mg = "Iron",
+        zinc_mg = "Zinc",
+        vitamin_a_ug = "Vitamin A"
+      )
+    )
 
-aqua_heatmap_df <- aqua_heatmap |> 
-  mutate(
-    protein = protein / (56 * 0.4) * 100 * ifelse(expressed_in_yield == "yes", yield / 100, 1),
-    omega = omega / 0.45 * 100 * ifelse(expressed_in_yield == "yes", yield / 100, 1),
-    vit_b12 = vit_b12 / 2.4 * 100 * ifelse(expressed_in_yield == "yes", yield / 100, 1)) |>   
-  group_by(species_name_nl, groep, type) |>
-  summarise(across(c(yield, protein, vit_b12, omega,ghg_m), ~ mean(.x, na.rm = TRUE)), .groups = "drop") |>
-  pivot_longer(cols = c(yield, protein, vit_b12, omega, ghg_m), names_to = "nutrient", values_to = "value") |>
-  filter(value > 0) |>
-  mutate(nutrient = factor(nutrient,
-    levels = c("yield", "protein", "vit_b12", "omega","ghg_m"),
-    labels = c("Edible yield", "Protein", "Vitamin B12", "Omega-3 (EPA+DHA)","CO2-eq")))
-
-
-
-# ============================================================
-# DEFINE GROUP ORDER
-# ============================================================
-
-# Aquaculture groups
-aqua_groups <- c(
-  "Eel",
-  "Trout",
-  "Catfish",
-  "Sturgeon",
-  "Marine finfish",
-  "Schaaldieren"
-)
-
-# Fisheries groups
-fish_groups <- c(
-  "Pelagische vis",
-  "Platvis",
-  "Garnalen",
-  "Rondvis",
-  "Schaaldieren",
-  "Inktvissen"
-)
-
-# ============================================================
-# ORDER TYPE + GROUP + SPECIES
-# ============================================================
-
-heatmap_df <- aqua_heatmap_df |>
- mutate( type = factor(type, levels = c( "Aquacultuur", "Visserij","Landbouwhuisdieren" )),
-    # Create separate ordering for groups
-    group_order = case_when(
-      type == "Aquacultuur" ~ match(groep, aqua_groups),
-      type == "Visserij" ~ match(groep, fish_groups))) |>
-  arrange(type, group_order, species_name_nl) |>
-  mutate(# Species order follows type -> group -> species
-    species_name_nl = factor(species_name_nl, levels = unique(species_name_nl)),
-    # Make group a character so both sets of groups
-    # can be used by facet_nested()
-    groep = as.character(groep))
-
-
-ifelse(facet_n=="groep", heatmap_df<-heatmap_df |> 
-  group_by(type,groep,nutrient) |> 
-  summarise(value=mean(value)),heatmap_df)
-
-
-facet_formula <- as.formula(
-    paste("~", facet_n)
+  # Add CO2 row
+  heatmap_df <- bind_rows(
+    heatmap_df,
+    df |>
+      filter(!is.na(ghg_m)) |>
+      mutate(
+        nutrient_n = "CO2-eq",
+        value = NA_real_,
+        score = NA_real_
+      )
   )
-ghg_min=0
-ghg_max=15
-  
 
-heatmap_df <- heatmap_df |>
-  mutate(ghg_value=ifelse(nutrient=="CO2-eq",value,NA_real_))
+  # Order species
+  aqua_groups <- c(
+    "Eel", "Trout", "Catfish", "Sturgeon",
+    "Marine finfish", "Schaaldieren"
+  )
+
+  fish_groups <- c(
+    "Pelagische vis", "Platvis", "Garnalen",
+    "Rondvis", "Schaaldieren", "Inktvissen"
+  )
 
   heatmap_df <- heatmap_df |>
-  mutate(nutrient_y=case_when(
-    nutrient=="Edible yield" ~ 5,
-    nutrient=="Protein" ~ 4,
-    nutrient=="Vitamin B12" ~ 3,
-    nutrient=="Omega-3 (EPA+DHA)" ~ 2,
-    nutrient=="CO2-eq" ~ 0.5
-  ))
-ggplot(heatmap_df,aes(x=.data[[x_f]],y=nutrient_y)) +
-  geom_tile(data=heatmap_df |> filter(nutrient!="CO2-eq"),aes(fill=value),colour="white",linewidth=0.5) +
-  geom_tile(data=heatmap_df |> filter(nutrient=="CO2-eq"),aes(fill=ghg_value),colour="white",linewidth=0.5) +
-  facet_nested(facet_formula,scales="free_x",space="free_x",drop=TRUE,nest_line=element_line(linewidth=0.8)) +
-  scale_y_continuous(
-    breaks=c(5,4,3,2,0.5),
-    labels=c("Edible yield","Protein","Vitamin B12","Omega-3 (EPA+DHA)","CO2-eq")
+    mutate(
+      productie = factor(
+        productie,
+        levels = c(
+          "Aquacultuur",
+          "Visserij",
+          "Landbouwhuisdieren"
+        )
+      ),
+      group_order = case_when(
+        productie == "Aquacultuur" ~ match(groep, aqua_groups),
+        productie == "Visserij" ~ match(groep, fish_groups),
+        TRUE ~ 99
+      )
+    ) |>
+    arrange(productie, group_order, species_name_nl) |>
+    mutate(
+      species_name_nl = factor(
+        species_name_nl,
+        levels = unique(species_name_nl)
+      ),
+      nutrient_y = match(
+        nutrient_n,
+        c(
+          "Edible yield", "Protein", "Vitamin B12",
+          "Omega-3 (EPA+DHA)", "Calcium", "Iodine",
+          "Iron", "Zinc", "Vitamin A", "CO2-eq"
+        )
+      )
+    )
+
+  # Plot
+  ggplot(
+    heatmap_df,
+    aes(x = .data[[x_f]], y = nutrient_y)
   ) +
-  scale_fill_gradientn(
-    colours=c("#edf8b1","#7fcdbb","#2c7fb8","#b2abd2","#8073ac","#4d3b78"),
-    values=scales::rescale(c(0,50,100,150,250,400)),
-    limits=c(0,400),
-    oob=scales::squish,
-    breaks=c(0,50,100,150,250,400),
-    labels=c("0%","50%","100%","150%","250%","400%+"),
-    name="percentage aanbevolen\nnutrienten behoefte",
-    guide=guide_colorbar(order=1)
-  ) +
-  ggnewscale::new_scale_fill() +
-  geom_tile(data=heatmap_df |> filter(nutrient=="CO2-eq"),aes(fill=ghg_value),colour="white",linewidth=0.5) +
-  scale_fill_gradientn(
-    colours=c("#FFF7BC","#FEC44F","#FC8D59","#D7301F","#7F0000"),
-    limits=c(ghg_min,ghg_max),
-    oob=scales::squish,
-    name="CO2-eq",
-    guide=guide_colorbar(order=2)
-  ) +
-  labs(x=NULL,y=NULL,title=NULL) +
-  theme_minimal() +
-  theme(
-    legend.key.width=unit(2.5,"cm"),
-    legend.key.height=unit(0.5,"cm"),
-    panel.grid=element_blank(),
-    axis.text.x=element_text(angle=45,hjust=1,vjust=1,size=9),
-    axis.text.y=element_text(size=10),
-    strip.text.x=element_text(face="bold",size=12),
-    strip.text.x.top=element_text(face="bold",size=9,margin=margin(1,1,1,1)),
-    strip.background=element_rect(fill="grey90",colour="white"),
-    panel.spacing.x=unit(1,"lines"),
-    ggh4x.axis.nestline=element_line(linewidth=0.6),
-    legend.position="bottom",
-    legend.box="vertical"
-  )
+
+    geom_tile(
+      data = filter(heatmap_df, nutrient_n != "CO2-eq"),
+      aes(fill = score),
+      colour = "white",
+      linewidth = 0.5
+    ) +
+
+    scale_fill_gradientn(
+      colours = c(
+        "#edf8b1", "#7fcdbb", "#2c7fb8",
+        "#b2abd2", "#8073ac", "#4d3b78"
+      ),
+      values = scales::rescale(c(0, 50, 100, 150, 250, 400)),
+      limits = c(0, 400),
+      oob = scales::squish,
+      breaks = c(0, 50, 100, 150, 250, 400),
+      labels = c("0%", "50%", "100%", "150%", "250%", "400%+"),
+      name = "Percentage aanbevolen\nnutriëntenbehoefte",
+      guide = guide_colorbar(order = 1)
+    ) +
+
+    ggnewscale::new_scale_fill() +
+
+    geom_tile(
+      data = filter(heatmap_df, nutrient_n == "CO2-eq"),
+      aes(fill = ghg_m),
+      colour = "white",
+      linewidth = 0.5
+    ) +
+
+    scale_fill_gradientn(
+      colours = c(
+        "#FFF7BC", "#FEC44F", "#FC8D59",
+        "#D7301F", "#7F0000"
+      ),
+      limits = c(0, 15),
+      oob = scales::squish,
+      name = "CO2-eq",
+      guide = guide_colorbar(order = 2)
+    ) +
+
+    ggh4x::facet_nested(
+      as.formula(paste("~", facet_n)),
+      scales = "free_x",
+      space = "free_x",
+      drop = TRUE,
+      nest_line = element_line(linewidth = 0.8)
+    ) +
+
+    scale_y_continuous(
+      breaks = 1:10,
+      labels = c(
+        "Edible yield", "Protein", "Vitamin B12",
+        "Omega-3 (EPA+DHA)", "Calcium", "Iodine",
+        "Iron", "Zinc", "Vitamin A", "CO2-eq"
+      )
+    ) +
+
+    labs(x = NULL, y = NULL, title = titel) +
+
+    theme_minimal() +
+    theme(
+      panel.grid = element_blank(),
+      axis.text.x = element_text(
+        angle = 45, hjust = 1, vjust = 1, size = 9
+      ),
+      axis.text.y = element_text(size = 10),
+      strip.text = element_text(face = "bold"),
+      strip.background = element_rect(
+        fill = "grey90", colour = "white"
+      ),
+      panel.spacing.x = unit(1, "lines"),
+      legend.position = "bottom",
+      legend.box = "vertical"
+    )
 }
+
+```
+
+```{r helpers-bubble graph}
+## bubblegraph visserij en livestock
+
+  # Prepare nutrient data
+  bubble_df <- aqua_heatmap |>
+    mutate(
+      potassium_g = potassium_g / 1e3
+    ) |>
+    pivot_longer(
+      cols = protein_g:sodium_mg,
+      names_to = "nutrient_n",
+      values_to = "value"
+    ) |>
+    left_join(nutr_req_hum, by = "nutrient_n") |>
+    filter(
+      !is.na(requirement),
+      value > 0,
+      nutrient_n %in% c(
+        "protein_g", "vitamin_b12_ug",
+        "omega_3_fatty_acids_g", "calcium_mg",
+        "iodine_ug", "iron_mg", "zinc_mg", "vitamin_a_ug"  )
+    ) |>
+    mutate(  score = value / as.numeric(requirement) * 100 )
+
+    bubble_df <- bubble_df |>
+  left_join(
+    species_colors_df |>
+      select(species_code, soort_nl, groep, volgorde, kleur),
+    by = "species_code",
+    suffix = c("", "_lookup")
+  ) |>
+    mutate(
+    nutrition_pct =
+      score /
+      mean(score, na.rm = TRUE) * 100,
+    ghg = ghg_m,
+    ghg_pct = ghg / mean(ghg, na.rm = TRUE) * 100,
+    value_euro=value_euro/live_weight_t,
+    price_pct = value_euro / mean(value_euro, na.rm = TRUE) * 100,
+  live_weight_y=live_weight_t*yield/100)
+
+bubble_df<-bubble_df |> 
+  filter(ghg_pct>0) |> 
+  group_by(species_name_nl,groep,kleur) |> 
+  summarise(nutrition_pct=mean(nutrition_pct),
+            ghg_pct=mean(ghg_pct),
+            price_pct=mean(price_pct),
+            live_weight_y=sum(live_weight_y))
+
+
+
+livestock_data<- read_csv("FAOSTAT_data.csv")|> clean_names()
+livestock_mean<-livestock_data |> 
+  filter(element=="Production") |> 
+  group_by(item,domain) |> 
+  summarise(value=mean(value)) 
+
+eggs<- 530000 #https://agridata.ec.europa.eu/extensions/DashboardEggs/EggsProduction.html
+
+livestock_select <-livestock_mean |> 
+  filter(item%in%c("Raw milk of cattle","Meat of pig with the bone, fresh or chilled","Meat of chickens, fresh or chilled","Meat of cattle with the bone, fresh or chilled"))
+
+bubble_df<-bubble_df |> 
+  mutate(live_weight_y=case_when(
+    species_name_nl=="Rund"~livestock_select |> filter(item=="Meat of cattle with the bone, fresh or chilled") |> pull(),
+    species_name_nl=="Varken"~livestock_select |> filter(item=="Meat of pig with the bone, fresh or chilled") |> pull(),
+    species_name_nl=="Kip"~livestock_select |> filter(item=="Meat of chickens, fresh or chilled") |> pull(),
+    species_name_nl=="Ei"~ eggs,
+    species_name_nl=="Melk"~livestock_select |> filter(item=="Raw milk of cattle") |> pull(),
+    TRUE~live_weight_y
+  ))
+bubble_df<-bubble_df |> 
+  select(nutrition_pct,ghg_pct,species_name_nl,live_weight_y,kleur) |> 
+  filter(!species_name_nl%in%c("Melk","Ei"))
+
+bubble_df<-bubble_df |> 
+  mutate(kleur=case_when(
+is.na(kleur)~"#343a34ff",
+TRUE~kleur
+  ))
+
+p <- ggplot( bubble_df, aes( x = nutrition_pct,  y = ghg_pct)) +
+  geom_hline(    yintercept = 100,    colour = "grey75",    linewidth = 0.8  ) +
+  geom_vline(    xintercept = 100,    colour = "grey75",    linewidth = 0.8  ) +
+  geom_point(    aes(      size = live_weight_y,      fill = kleur    ),    shape = 21,    colour = "white",    stroke = 0.8,    alpha = 0.85 ) +
+  geom_text_repel(  aes(  label = species_name_nl ),
+    colour = "black",
+    fontface = "bold",
+    size = 3.5,
+    box.padding = 0.45,
+    point.padding = 0.25,
+    min.segment.length = 0,
+    max.overlaps = Inf ) +
+  scale_fill_identity(  guide = "none" ) +
+  scale_size_area(
+    max_size = 45,
+    name = "Catch (tonnes)" ) +
+  scale_x_log10(
+    breaks = c(20, 50, 100, 200, 500, 1000),
+    labels = \(x) paste0(x, "%") ) +
+  scale_y_log10( breaks = c(5, 10, 20, 50, 100, 200, 400), labels = \(x) paste0(x, "%")) +
+  labs(   x = "Relative nutritional score",  y = "Relative greenhouse gas emissions" ) +
+  theme_classic(base_size = 13) +
+  theme(
+    axis.title = element_text(size = 13),
+    axis.text = element_text(colour = "black"),
+    axis.ticks = element_line(colour = "black"),
+    legend.position ="none" ,
+    plot.margin = margin(
+      15, 20, 15, 15 ))
 
 ```
 <!-- =========================================================
@@ -1367,8 +1525,15 @@ aqua_heatmap |> plot_nutrient_heatmap(expressed_in_yield="no")
 ```
 
 ```{r nl-nutr_heatmap_groep, fig.cap="Figuur 20. Nutrienten diversiteit in aquatische groepen uit Nederland."}
-aqua_heatmap |> plot_nutrient_heatmap(x="groep", facet_n="type",expressed_in_yield="no")
+aqua_heatmap |> plot_nutrient_heatmap(x="groep", facet_n="productie",expressed_in_yield="no")
 ```
+
+```{r nl-nutr_bubble, fig.cap="Figuur 21. Relatieve nutritie en emissie aquatische groepen."}
+p
+```
+
+
+
 # Session information
 ```{r session-info}
 sessionInfo()
