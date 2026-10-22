@@ -443,6 +443,56 @@ aer_nl_all <- aer_landings_nl |>
   )
 ```
 
+\newpage
+
+# Aanvoer naar gebied: Noordzee + Kanaal versus overige gebieden
+
+```{r aanvoer-regio, include=FALSE}
+aanvoer_regio <- aer_landings_nl |>
+  mutate(
+    regio = if_else(
+      tolower(sub_reg) %in% c("27.4.a", "27.4.b", "27.4.c", "27.7.d"),
+      "Noordzee+kanaal", "Overige gebieden"
+    ),
+    regio = factor(regio, levels = c("Overige gebieden", "Noordzee+kanaal"))
+  ) |>
+  group_by(year, regio) |>
+  summarise(
+    live_weight_t = sum(live_weight_t, na.rm = TRUE),
+    value_euro    = sum(value_euro,    na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  group_by(year) |>
+  mutate(
+    pct = live_weight_t / sum(live_weight_t),
+    label_tekst = if_else(regio == "Noordzee+kanaal", percent(pct, accuracy = 1), NA_character_)
+  ) |>
+  ungroup()
+```
+
+```{r plot-aanvoer-regio, fig.width=9, fig.height=5}
+ggplot(aanvoer_regio, aes(x = year, y = live_weight_t, fill = regio)) +
+  geom_col() +
+  geom_text(
+    aes(label = label_tekst),
+    position = position_stack(vjust = 0.5),
+    colour = "white", fontface = "bold", size = 3,
+    na.rm = TRUE
+  ) +
+  scale_y_continuous(labels = label_number(scale = 1e-3, suffix = " kt")) +
+  scale_fill_manual(
+    name = NULL,
+    values = c("Noordzee+kanaal" = "#1565C0", "Overige gebieden" = "grey70")
+  ) +
+  labs(
+    title    = "Aanvoer naar gebied, per jaar",
+    subtitle = "Percentage = aandeel Noordzee+kanaal in de totale aanvoer",
+    x = NULL, y = "Levend gewicht (duizend ton)"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "top")
+```
+
 ```{r load-agrimatie, include=FALSE}
 agrimatie_data <- read_excel(agrimatie_aquacultuur_file) %>%
   clean_names() %>%
