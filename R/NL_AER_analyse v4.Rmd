@@ -45,7 +45,7 @@ aer_file                    <- file.path(onedrive, "Data/STECF_25 07_EU Fleet Ec
 aer_file_nl                 <- file.path(onedrive, "Data/aer_nl_all.RData")
 agrimatie_brandstof_file    <- file.path(onedrive, "Data/Agrimatie/Agrimatie_brandstofverbruik.xlsx")
 agrimatie_aquacultuur_file  <- file.path(onedrive, "Data/Agrimatie/Agrimatie_mosselen_en_oesters.xlsx")
-nutr_file                   <- file.path(onedrive, "Data/Nutrients_overzicht_sources.xlsx")
+nutr_file                   <- file.path(onedrive, "Data/Nutrienten_uit_zee/Nutrients_overzicht_sources.xlsx")
 
 out_dir                     <- file.path(onedrive, "resultaten")
 if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
@@ -69,12 +69,11 @@ top_n_species <- 15
      hogere volgordenummers krijgen geleidelijk een lichtere, minder
      verzadigde tint van dezelfde kleurfamilie.
 
-     `groep_instellingen`: per visserijgroep een vaste kleurfamilie (hue)
-     in HCL-kleurruimte, met een chroma- en helderheidsbereik. Door zowel
-     chroma als helderheid (én een klein beetje hue) te laten variëren
-     over de soorten in een groep, ontstaan grotere, beter te
-     onderscheiden kleurverschillen dan bij een simpele lineaire
-     kleurgradiënt.
+     `groep_instellingen`: per visserijgroep twee vaste ankerkleuren
+     (donker, licht) als hex-code. De soorten binnen een groep krijgen
+     via colorRampPalette() een kleur op het verloop tussen deze twee
+     ankerkleuren, van donker (volgorde 1, grootste waarde) naar licht
+     (hoogste volgordenummer in de groep).
 
      Uitbreiden: voeg een rij toe aan soort_lookup met species_code,
      soort_nl, groep (moet voorkomen in groep_instellingen) en volgorde.
@@ -154,37 +153,34 @@ soort_lookup <- tribble(
   "MON", "Zeeduivels",               "Overige soorten",     1
 )
 
-# Per visserijgroep: hue (kleurfamilie, 0-360 in HCL) en het bereik van chroma
-# (verzadiging) en luminantie (helderheid) waarover de soorten binnen die groep
-# verspreid worden. hue_drift geeft een kleine hue-verschuiving over de
-# soorten binnen de groep mee, wat de kleuren nog beter onderscheidbaar maakt.
+# Per visserijgroep: twee ankerkleuren (donker -> licht). De soorten binnen
+# een groep krijgen een kleur op het verloop tussen deze twee hex-codes via
+# colorRampPalette(), in volgorde van "volgorde" (1 = meest waardevol/donker,
+# laatste soort = lichtst). Zelfde systematiek/stijl als de kleurfamilies die
+# elders in de Markttool-figuren worden gebruikt (bv. blauw voor aanvoer/
+# import, oranje voor export), zodat de kleurtaal consistent aanvoelt.
 groep_instellingen <- tribble(
-  ~groep,               ~hue, ~chroma_start, ~chroma_eind, ~lum_start, ~lum_eind, ~hue_drift,
-  "Platvis",             250,   95,           20,           25,        85,        15,   # blauw
-  "Rondvis",             135,   85,           15,           22,        85,        15,   # groen
-  "Pelagische vis",       38,   95,           20,           28,        88,        20,   # oranje
-  "Garnalen",            330,   85,           30,           35,        82,        10,   # roze/magenta
-  "Kreeften",              8,   75,           75,           42,        42,         0,   # rood
-  "Schaaldieren",        285,   80,           15,           28,        85,        15,   # paars
-  "Inktvissen",          195,   80,           20,           28,        85,        15,   # turkoois
-  "Weekdieren",           68,   65,           65,           42,        42,         0,   # olijf/goud
-  "Haaien en roggen",      0,   15,            5,           25,        75,         0,   # grijs (achromatisch)
-  "Overige soorten",      48,   55,           20,           35,        78,        10    # bruin/zand
+  ~groep,               ~kleur_donker, ~kleur_licht,
+  "Platvis",             "#00695C",    "#80CBC4",   # teal
+  "Rondvis",             "#2E7D32",    "#A5D6A7",   # groen
+  "Pelagische vis",      "#1565C0",    "#90CAF9",   # blauw
+  "Garnalen",            "#AD1457",    "#F48FB1",   # roze/magenta
+  "Kreeften",            "#C62828",    "#EF9A9A",   # rood
+  "Schaaldieren",        "#6A1B9A",    "#CE93D8",   # paars
+  "Inktvissen",          "#E65100",    "#FFCC80",   # oranje
+  "Weekdieren",          "#9E9D24",    "#E6EE9C",   # olijf/goud
+  "Haaien en roggen",    "#424242",    "#BDBDBD",   # grijs (achromatisch)
+  "Overige soorten",     "#6D4C41",    "#D7CCC8"    # bruin/zand
 )
 
-# Genereert n kleuren binnen een groep: chroma en luminantie lopen (samen met
-# een kleine hue-verschuiving) op van "donker/verzadigd" (soort 1, meest
-# waardevol) naar "licht/gedempt" (laatste soort in de groep).
-maak_groep_kleuren <- function(n, hue, chroma_start, chroma_eind, lum_start, lum_eind, hue_drift) {
+# Genereert n kleuren binnen een groep: een lineair kleurverloop tussen de
+# donkere en de lichte ankerkleur van die groep, donker voor soort 1 (meest
+# waardevol) naar licht voor de laatste soort in de groep.
+maak_groep_kleuren <- function(n, kleur_donker, kleur_licht) {
   if (n <= 1) {
-    return(grDevices::hcl(h = hue, c = chroma_start, l = lum_start))
+    return(kleur_donker)
   }
-  stap <- seq(0, 1, length.out = n)
-  grDevices::hcl(
-    h = hue   + stap * hue_drift,
-    c = chroma_start + stap * (chroma_eind - chroma_start),
-    l = lum_start     + stap * (lum_eind     - lum_start)
-  )
+  grDevices::colorRampPalette(c(kleur_donker, kleur_licht))(n)
 }
 
 # Bouw per soort een vaste kleur. Belangrijk: eerst sorteren op volgorde
@@ -197,12 +193,8 @@ species_colors_df <- soort_lookup |>
   mutate(
     kleur = maak_groep_kleuren(
       n            = n(),
-      hue          = hue[1],
-      chroma_start = chroma_start[1],
-      chroma_eind  = chroma_eind[1],
-      lum_start    = lum_start[1],
-      lum_eind     = lum_eind[1],
-      hue_drift    = hue_drift[1]
+      kleur_donker = kleur_donker[1],
+      kleur_licht  = kleur_licht[1]
     )
   ) |>
   ungroup()
@@ -1046,6 +1038,119 @@ plot_prijs_vs_prod <- function(df,
       fontface = "bold"
     )
 }
+
+# ---------------------------------------------------------------------------
+# Alternatieve weergave van combi_4paneel(): een bubbelplot in plaats van
+# gestapelde balken. Aanvoer (levend gewicht, totaal over alle jaren in df)
+# op de x-as, aanvoerwaarde op de y-as, bolgrootte = aandeel van de soort in
+# de totale aanvoerwaarde (%), kleur = vaste soortkleur (species_colors_master,
+# zelfde als in alle andere figuren), met kleine soortnaam-labels.
+# ---------------------------------------------------------------------------
+
+# Zelfde top-N/"Overig"-selectielogica als prepare_topn_species(), maar
+# aggregeert tot één punt per soort (gewicht + waarde), optioneel beperkt tot
+# een jarenbereik (`years`, bv. 2022:2024; NULL = alle jaren in df), en voegt
+# het aandeel in de totale waarde toe (inclusief "Overig" in de noemer).
+prepare_species_bubble <- function(df, top_n = top_n_species, years = NULL) {
+
+  if (!is.null(years)) {
+    df <- df |> filter(year %in% years)
+  }
+
+  n_jaren <- n_distinct(df$year)
+
+  df <- df |>
+    left_join(soort_lookup |> select(species_code, soort_nl, groep), by = "species_code") |>
+    mutate(
+      soort_naam  = coalesce(soort_nl, species_name),
+      soort_label = paste0(soort_naam, " (", species_code, ")"),
+      groep       = if_else(is.na(groep), "Overige soorten", groep)
+    )
+
+  species_totals <- df |>
+    group_by(species_code, soort_label, soort_naam, groep) |>
+    summarise(
+      live_weight_t = sum(live_weight_t, na.rm = TRUE),
+      value_euro    = sum(value_euro,    na.rm = TRUE),
+      .groups = "drop"
+    )
+
+  top_codes <- species_totals |>
+    slice_max(value_euro, n = top_n, with_ties = FALSE) |>
+    pull(species_code)
+
+  label_volgorde <- species_totals |>
+    filter(species_code %in% top_codes) |>
+    left_join(soort_lookup |> select(species_code, volgorde), by = "species_code") |>
+    mutate(
+      groep    = factor(groep, levels = groep_volgorde),
+      volgorde = if_else(is.na(volgorde), 99, volgorde)
+    ) |>
+    arrange(groep, volgorde) |>
+    pull(soort_label)
+
+  species_totals |>
+    mutate(
+      species_code_plot = if_else(species_code %in% top_codes, species_code, "OVERIG"),
+      species_label      = if_else(species_code %in% top_codes, soort_label, "Overig"),
+      soort_naam         = if_else(species_code %in% top_codes, soort_naam, "Overig"),
+      species_label      = factor(species_label, levels = c(label_volgorde, "Overig"))
+    ) |>
+    group_by(species_code_plot, species_label, soort_naam) |>
+    summarise(
+      live_weight_t = sum(live_weight_t, na.rm = TRUE),
+      value_euro    = sum(value_euro,    na.rm = TRUE),
+      .groups = "drop"
+    ) |>
+    mutate(
+      pct_waarde      = value_euro / sum(value_euro) * 100,
+      # Gemiddelde prijs over de geselecteerde jaren, gewogen naar volume
+      # (totale waarde / totaal gewicht), in euro per kg. Deze ratio is
+      # gelijk ongeacht of gewicht/waarde als som of als jaargemiddelde
+      # worden weergegeven, dus wordt vóór het middelen berekend.
+      prijs_euro_kg   = value_euro / (live_weight_t * 1000),
+      # Gewicht en waarde omzetten naar gemiddelde per jaar i.p.v. de som
+      # over alle geselecteerde jaren.
+      live_weight_t   = live_weight_t / n_jaren,
+      value_euro      = value_euro    / n_jaren
+    )
+}
+
+# Bubbelplot: aanvoer (x) vs waarde (y), bolgrootte = prijs (euro/kg),
+# kleur = vaste soortkleur, met kleine soortnaam-labels.
+plot_species_bubble <- function(df_plot, title_txt, subtitle_txt = NULL,
+                                 x_label = "Gemiddelde aanvoer per jaar, levend gewicht (t)",
+                                 y_label = "Gemiddelde aanvoerwaarde per jaar (mln EUR)") {
+
+  pal <- get_fixed_palette(df_plot)
+
+  df_plot <- df_plot |> mutate(value_euro_mln = value_euro / 1e6)
+
+  ggplot(df_plot, aes(x = live_weight_t, y = value_euro_mln,
+                       size = prijs_euro_kg, fill = species_label)) +
+    geom_point(shape = 21, colour = "white", alpha = 0.9) +
+    geom_text_repel(
+      aes(label = soort_naam),
+      size = 2.8, colour = "grey20",
+      max.overlaps = Inf, box.padding = 0.3, point.padding = 0.2,
+      show.legend = FALSE
+    ) +
+    scale_fill_manual(values = pal, name = "Soort", guide = "none") +
+    scale_size_area(
+      max_size = 20, name = "Prijs (euro/kg)",
+      breaks = scales::breaks_extended(n = 6)(c(0, max(df_plot$prijs_euro_kg, na.rm = TRUE)))
+    ) +
+    guides(size = guide_legend(override.aes = list(fill = "grey40", colour = "grey40"))) +
+    scale_x_log10(labels = comma) +
+    scale_y_log10(labels = comma) +
+    labs(title = title_txt, subtitle = subtitle_txt, x = x_label, y = y_label) +
+    theme_bw() +
+    theme(
+      legend.position = "right",
+      legend.text     = element_text(size = 8),
+      legend.key.size = unit(0.4, "cm")
+    )
+}
 ```
 
 <!-- =========================================================
@@ -1174,6 +1279,21 @@ combi_4paneel(
   titel_gewicht = "NL vangsten per soort — Noordzee + 7d",
   titel_waarde  = "NL aanvoerwaarde per soort — Noordzee + 7d"
 )
+```
+
+## 2.4b Alternatieve weergave: aanvoer versus waarde per soort (bubbel)
+
+Zelfde onderliggende gegevens als hierboven, nu beperkt tot de meest recente jaren (2022-2024), weergegeven als jaargemiddelde (niet als som over de periode), en als bubbelplot: gemiddelde aanvoer (levend gewicht) per jaar op de x-as, gemiddelde aanvoerwaarde per jaar op de y-as, bolgrootte geeft de gemiddelde prijs per soort (euro/kg, totale waarde gedeeld door totaal gewicht over 2022-2024 — deze verhouding is gelijk aan som of gemiddelde) weer. Kleuren zijn dezelfde vaste soortkleuren als in de andere figuren. Beide assen zijn echt logaritmisch (`scale_x_log10`/`scale_y_log10`, geen kwasi-log zoals een sqrt- of symlog-schaal) — de afstand tussen 100 en 1.000 is gelijk aan die tussen 1.000 en 10.000. Alleen de bolgrootte gebruikt een lineaire oppervlakteschaal.
+
+```{r combi-ns-bubble, fig.width=11, fig.height=8, fig.cap="Figuur 7b. Nederlandse gemiddelde aanvoer en aanvoerwaarde per jaar, per soort, Noordzee + 7d (AER), 2022-2024. Bolgrootte = gemiddelde prijs (euro/kg)."}
+bubble_jaren <- 2022:2024
+
+aer_nl_ns |>
+  prepare_species_bubble(years = bubble_jaren) |>
+  plot_species_bubble(
+    title_txt    = "NL aanvoer versus aanvoerwaarde per soort — Noordzee + 7d",
+    subtitle_txt = paste0("Jaargemiddelde ", min(bubble_jaren), "-", max(bubble_jaren), "  |  Top ", top_n_species, " soorten + overig")
+  )
 ```
 
 
