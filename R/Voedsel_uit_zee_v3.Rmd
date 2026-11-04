@@ -590,6 +590,7 @@ beschikbaarheid <- vergelijking |>
 ```
 
 ```{r plot-kweek-aanvoer-import-vs-export, fig.width=9, fig.height=5}
+
 beschikbaarheid_wide <- beschikbaarheid |>
   filter(jaar %in% weergave_jaren) |>
   group_by(jaar) |>
@@ -601,9 +602,12 @@ beschikbaarheid_wide <- beschikbaarheid |>
     .groups = "drop"
   ) |>
   mutate(
-    pct_aanvoer = aanvoer_ton / (kweek_ton + aanvoer_ton + import_ton),
-    label_y     = aanvoer_ton / 2,
-    label_tekst = percent(pct_aanvoer, accuracy = 1)
+    pct_aanvoer   = aanvoer_ton / (kweek_ton + aanvoer_ton + import_ton),
+    label_y       = aanvoer_ton / 2,
+    label_tekst   = percent(pct_aanvoer, accuracy = 1),
+    aanbod_totaal = kweek_ton + aanvoer_ton + import_ton,
+    # numerieke x-positie, in dezelfde volgorde als de balken (fct_rev(factor(jaar)))
+    x_pos         = as.numeric(fct_rev(factor(jaar)))
   )
 
 beschikbaarheid_plot0 <- beschikbaarheid_wide |>
@@ -625,6 +629,12 @@ beschikbaarheid_plot0 <- beschikbaarheid_wide |>
 ggplot(beschikbaarheid_plot0, aes(x = fct_rev(factor(jaar)), y = ton, fill = stroom)) +
   geom_col(position = "stack", width = 0.6) +
   geom_hline(yintercept = 0, colour = "grey40", linewidth = 0.4) +
+  geom_segment(
+    data = beschikbaarheid_wide,
+    aes(x = x_pos - 0.3, xend = x_pos + 0.3, y = -aanbod_totaal, yend = -aanbod_totaal),
+    inherit.aes = FALSE,
+    colour = "black", linewidth = 0.6
+  ) +
   geom_text(
     data = beschikbaarheid_wide,
     aes(x = fct_rev(factor(jaar)), y = label_y, label = label_tekst),
@@ -645,12 +655,14 @@ ggplot(beschikbaarheid_plot0, aes(x = fct_rev(factor(jaar)), y = ton, fill = str
   ) +
   labs(
     title    = "Aanvoer + kweek + import versus export, per jaar",
-    subtitle = "Percentage = aanvoer t.o.v. (aanvoer + kweek + import)",
+    subtitle = "Percentage = aanvoer t.o.v. (aanvoer + kweek + import). Zwarte streep = export = 100% van aanbod.",
     x = NULL, y = "Levend gewicht (duizend ton)"
   ) +
   theme_minimal() +
   theme(legend.position = "top")
+
 ```
+
 
 
 \newpage
@@ -660,6 +672,7 @@ ggplot(beschikbaarheid_plot0, aes(x = fct_rev(factor(jaar)), y = ton, fill = str
 Dezelfde figuur als hierboven maar nu uitgezet per jaar en per soort.
 
 ```{r plot-kweek-aanvoer-import-vs-export-per-soort, fig.width=12, fig.asp=0.6}
+
 beschikbaarheid_plot <- beschikbaarheid |>
   filter(jaar %in% weergave_jaren) |>
   mutate(soort_plot = if_else(soort_nl %in% top_soorten, soort_nl, "Overig / onbekend")) |>
@@ -703,12 +716,13 @@ ggplot(beschikbaarheid_plot, aes(x = fct_rev(soort_plot), y = ton, fill = stroom
     breaks = c("Export", "Aanvoer (AER)", "Kweek (Agrimatie)", "Import")
   ) +
   labs(
-    title    = "Aanvoer + kweek + import versus export per soort, 2022-2024",
+    title    = "Aanvoer + kweek + import versus export per soort, 2018-2024",
     subtitle = "Aanvoer, kweek en import naar rechts, export naar links.",
     x = NULL, y = "Gewicht (duizend ton)"
   ) +
   theme_minimal() +
   theme(legend.position = "top")
+
 ```
 
 \newpage
@@ -717,10 +731,12 @@ ggplot(beschikbaarheid_plot, aes(x = fct_rev(soort_plot), y = ton, fill = stroom
 
 ```{r plot-kweek-aanvoer-import-vs-export-per-soort2, fig.width=12, fig.asp=1.1}
 
-beschikbaarheid_plot <- beschikbaarheid |>
+beschikbaarheid_wide_soort <- beschikbaarheid |>
   filter(jaar %in% weergave_jaren) |>
-  mutate(soort_plot = if_else(soort_nl %in% top_soorten, soort_nl, "Overig / onbekend")) |>
-  mutate(jaar = factor(as.character(jaar))) %>%
+  mutate(
+    soort_plot = if_else(soort_nl %in% top_soorten, soort_nl, "Overig / onbekend"),
+    jaar       = factor(as.character(jaar))
+  ) |>
   group_by(jaar, soort_plot) |>
   summarise(
     kweek_ton   = sum(kweek_ton),
@@ -729,24 +745,37 @@ beschikbaarheid_plot <- beschikbaarheid |>
     export_ton  = sum(export_ton),
     .groups = "drop"
   ) |>
+  mutate(
+    aanbod_totaal = kweek_ton + aanvoer_ton + import_ton,
+    soort_plot    = factor(soort_plot, levels = c(top_soorten, "Overig / onbekend")),
+    x_pos         = as.numeric(fct_rev(jaar))
+  )
+
+beschikbaarheid_plot <- beschikbaarheid_wide_soort |>
+  dplyr::select(jaar, soort_plot, kweek_ton, aanvoer_ton, import_ton, export_ton) |>
   mutate(export_ton = -1 * export_ton) |>
   pivot_longer(
     cols = c(kweek_ton, aanvoer_ton, import_ton, export_ton),
     names_to = "stroom", values_to = "ton"
   ) |>
   mutate(
-    stroom     = recode(stroom,
-                         aanvoer_ton = "Aanvoer (AER)",
-                         kweek_ton   = "Kweek (Agrimatie)",
-                         import_ton  = "Import",
-                         export_ton  = "Export"),
-    stroom     = factor(stroom, levels = c("Export", "Import", "Kweek (Agrimatie)", "Aanvoer (AER)")),
-    soort_plot = factor(soort_plot, levels = c(top_soorten, "Overig / onbekend"))
+    stroom = recode(stroom,
+                     aanvoer_ton = "Aanvoer (AER)",
+                     kweek_ton   = "Kweek (Agrimatie)",
+                     import_ton  = "Import",
+                     export_ton  = "Export"),
+    stroom = factor(stroom, levels = c("Export", "Import", "Kweek (Agrimatie)", "Aanvoer (AER)"))
   )
 
 ggplot(beschikbaarheid_plot, aes(x = fct_rev(jaar), y = ton, fill = stroom)) +
   geom_col(position = "stack", width = 0.75) +
   geom_hline(yintercept = 0, colour = "grey40", linewidth = 0.4) +
+  geom_segment(
+    data = beschikbaarheid_wide_soort,
+    aes(x = x_pos - 0.35, xend = x_pos + 0.35, y = -aanbod_totaal, yend = -aanbod_totaal),
+    inherit.aes = FALSE,
+    colour = "black", linewidth = 0.5
+  ) +
   coord_flip() +
   facet_wrap(~soort_plot, ncol = 4) +
   scale_y_continuous(labels = function(x) label_number(scale = 1e-3, suffix = " kt")(abs(x))) +
@@ -761,13 +790,14 @@ ggplot(beschikbaarheid_plot, aes(x = fct_rev(jaar), y = ton, fill = stroom)) +
     breaks = c("Export", "Aanvoer (AER)", "Kweek (Agrimatie)", "Import")
   ) +
   labs(
-    title    = "Aanvoer + kweek + import versus export per soort, 2022-2024",
-    subtitle = "Aanvoer, kweek en import naar rechts, export naar links.",
+    title    = "Aanvoer + kweek + import versus export per soort, 2018-2024",
+    subtitle = "Aanvoer, kweek en import naar rechts, export naar links. Zwarte streep = export = 100% van aanbod.",
     x = NULL, y = "Gewicht (duizend ton)"
   ) +
   theme_minimal() +
   theme(legend.position = "top")
 ```
+
 
 
 \newpage
@@ -808,7 +838,7 @@ beschikbaarheid |>
 \newpage
 
 
-```{r plot-aanvoer-waarde, fig.width=9, fig.height=5}
+```{r plot-aanvoer-waarde, eval=FALSE, fig.height=5, fig.width=9, include=FALSE}
 
 t <- 
   aer_nl_all_nutr %>% 
